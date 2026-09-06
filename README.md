@@ -5,7 +5,7 @@ A robust, scalable relational database system designed on **PostgreSQL** to mana
 ---
 
 ## 👥 Team Members - Group M3B
-* **Nguyen Truong Nghi** - n24dccn142@student.ptithcm.edu.vn (Project Owner)
+* **Nguyen Truong Nghi** - truongnghi1106@gmail.com (Project Owner)
 * **Pham Cong Dang** - n24dccn102@student.ptithcm.edu.vn
 * **Mai Van Cong** - n24dccn100@student.ptithcm.edu.vn
 
