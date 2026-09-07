@@ -46,3 +46,4 @@
   * Chi phí tổng của phiên sạc được tính toán dựa trên đơn giá điện năng theo dải công suất thực tế/định mức và phí đỗ quá giờ (nếu có) với công thức: `Tổng tiền = (consumed_energy_kwh * price_per_kwh_value) + Phí phạt quá giờ`
   * Phí đỗ quá giờ (`overtime_fee_per_hour_value`) được tự động áp dụng nếu thời gian rút sạc rời vị trí (`end_datetime`) muộn hơn thời điểm xe đã sạc đầy (`fully_charged_datetime`).
   * Mỗi phiên hoàn tất sẽ khởi tạo một giao dịch thanh toán (`payment_transaction`) lưu trữ đơn vị tiền tệ tuân thủ ISO 4217 (`VND`), phương thức thanh toán (`payment_method_code`), và mã đối soát từ cổng thanh toán bên thứ ba (`gateway_reference_id`).
+  * Giao dịch thanh toán liên kết trực tiếp với phiên sạc qua đó truy suất thông tin tài khoản khách hàng.
