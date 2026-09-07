@@ -44,6 +44,7 @@ Dựa trên tiêu chuẩn ISO/IEC 11179: Từ điển dữ liệu và tên các 
 | `parking_facility` | `facility_name_text` | VARCHAR(100) | NOT NULL | Tên bãi đỗ xe / trạm sạc |
 | `parking_facility` | `street_address_text` | VARCHAR(255) | NOT NULL | Địa chỉ hành chính chi tiết của bãi đỗ |
 | `parking_facility` | `geographic_location` | GEOMETRY(Point, 4326) | Tuân thủ ISO 6709 (PostGIS WGS 84) | Tọa độ địa lý GPS của bãi đỗ xe |
+| `parking_facility` | `address_text ` | VARCHAR(255) | NOT NULL | Lưu địa chỉ bãi đỗ xe |
 | `parking_facility` | `total_capacity_count` | INT | NOT NULL, CHECK (`total_capacity_count > 0`) | Tổng sức chứa vị trí đỗ xe tối đa |
 
 #### Bảng `parking_space`
