@@ -33,6 +33,16 @@ Hệ thống được xây dựng trên nền tảng cơ sở dữ liệu quan h
     * `CUSTOMER`: Khách hàng sử dụng dịch vụ bãi đỗ và sạc xe.
     * `MANAGER`: Nhân viên/Quản lý vận hành tại các bãi đỗ xe được phân công.
     * `ADMIN`: Quản trị viên cấp cao toàn quyền quản lý hệ thống.
+* **Định nghĩa & Ví dụ minh họa các Role:**
+  *  Khách hàng (CUSTOMER): 
+     * Định nghĩa: Người dùng cá nhân/tổ chức sử dụng ứng dụng để đặt đỗ và sạc xe.
+     * Ví dụ: Khách hàng Nguyễn Văn A (`account_identifier` = 'usr-001') đăng ký sở hữu xe VinFast VF8 trong bảng `vehicle` (biển số `license_plate` = '51H-123.45', dung lượng pin `battery_capacity_kwh` = 82.00). Anh A tạo đơn đặt chỗ trước tại bãi Vincom Đồng Khởi ô A-01 từ 18:00 đến 19:30. Sau khi sạc 45.50\text{ kWh}, hệ thống phát hành hóa đơn 182,000\text{ VND} trong `payment_transaction` và anh A thanh toán qua ví MoMo (`payment_method_code` = 'E_WALLET').
+  *  Quản lý Bãi đỗ xe (MANAGER):
+     * Định nghĩa: Nhân viên trực tiếp vận hành bãi đỗ được phân công quản lý.
+     * Ví dụ: Quản lý Trần Thị B (`role_code` = 'MANAGER', `account_identifier` = 'mng-002') được gán phụ trách Bãi đỗ Central Park qua bảng `facility_manager`. Chị B theo dõi sơ đồ 50 ô đỗ thời gian thực, phát hiện ô B-05 báo `OCCUPIED` nhưng trụ sạc báo lỗi `FAULT` để cử kỹ thuật xử lý. Nếu lượt đặt chỗ quá 30 phút khách không đến, chị B (hoặc tiến trình tự động) đổi trạng thái `reservation_status_code` = 'CANCELLED' để mở ô đỗ về `AVAILABLE`.
+  *  Quản trị viên Hệ thống (ADMIN):
+     * Định nghĩa: Cấp quản trị cao nhất toàn quyền cấu hình và kiểm soát hệ thống.
+     * Ví dụ: Admin tạo bãi đỗ mới "Trạm sạc Bến Thành" trong `parking_facility` với tọa độ GIS PostGIS `geographic_location`, thêm các ô đỗ `parking_space` và đăng ký trụ sạc chuẩn ISO 15118 (`evse_identifier` = 'VN*EVSE*E99999'). Admin cấu hình chính sách giá linh hoạt trong `tariff_rate` (Giờ cao điểm 17:00-20:00 giá 4,000\text{ VND/kWh}, phí đỗ ngâm quá giờ 60,000\text{ VND/giờ}). Admin thẩm tra báo cáo doanh thu từ `payment_transaction` (ràng buộc `ON DELETE RESTRICT` ngăn xóa mất hóa đơn tài chính).
 * **Quản lý Phương tiện (`vehicle`):**
   * Mỗi khách hàng (`CUSTOMER`) có thể sở hữu và đăng ký nhiều xe điện trong hệ thống (Quan hệ sở hữu 1:N).
   * Mỗi phương tiện được định danh duy nhất bằng Biển số xe (`license_plate`).
