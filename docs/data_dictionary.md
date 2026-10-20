@@ -1,4 +1,11 @@
-# Data Dictionary
+# Từ điển Dữ liệu (Data Dictionary)
+## Dự án: Smart City EV Charging & Parking Management (Theo chuẩn ISO/IEC 11179)
+**Nhóm:** M3B | **Môn:** Cơ sở dữ liệu
+* Thành viên nhóm:
+  * Nguyễn Trường Nghị - n24dccn142@student.ptithcm.edu.vn
+  * Phạm Công Đang - n24dccn102@student.ptithcm.edu.vn
+  * Mai Văn Công - n24dccn100@student.ptithcm.edu.vn
+# TỪ ĐIỂN DỮ LIỆU CƠ SỞ DỮ LIỆU (DATA DICTIONARY)
 
 ## 1. USER_ACCOUNT
 
