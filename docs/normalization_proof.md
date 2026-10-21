@@ -8,7 +8,6 @@
   * Nguyễn Trường Nghị - `n24dccn142@student.ptithcm.edu.vn`
   * Phạm Công Đang - `n24dccn102@student.ptithcm.edu.vn`
   * Mai Văn Công - `n24dccn100@student.ptithcm.edu.vn`
-* **Thời hạn dự án:** 29/08/2026 - Week 8
 
 ---
 
