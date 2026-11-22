@@ -73,9 +73,11 @@ if (-not $SkipPytest) {
     $py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
     if (-not (Test-Path $py)) { $py = "python" }
     $log = Join-Path $outDir "pytest.txt"
-    & $py -m pytest tests -v --tb=short `
-        --junitxml=(Join-Path $outDir "ket_qua.xml") `
-        --html=(Join-Path $outDir "bao_cao.html") --self-contained-html 2>&1 |
+    $xmlPath  = Join-Path $outDir "ket_qua.xml"
+    $htmlPath = Join-Path $outDir "bao_cao.html"
+    # v3.1: build each option as one quoted string; "--opt=(expr)" was split by
+    # PowerShell and pytest received the path as a separate (missing) argument.
+    & $py -m pytest tests -v --tb=short "--junitxml=$xmlPath" "--html=$htmlPath" --self-contained-html 2>&1 |
         ForEach-Object { $_.ToString() } | Tee-Object $log
     $code = $LASTEXITCODE
     $last = (Get-Content $log | Where-Object { $_ -match "(passed|failed|error|no tests ran)" } | Select-Object -Last 1)

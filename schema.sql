@@ -1,5 +1,5 @@
 -- =============================================================================
--- Smart City EV Charging & Parking Management  |  Group M3B  |  v0.3
+-- Smart City EV Charging & Parking Management  |  Group M3B  |  v0.3.1
 -- PostgreSQL 14+  (PostGIS + btree_gist required)
 -- Style: SQLStyle.guide (lowercase snake_case identifiers, UPPERCASE keywords)
 -- Naming: ISO/IEC 11179 suffixes
@@ -523,6 +523,10 @@ CREATE TRIGGER trg_payment_immutable
     FOR EACH ROW EXECUTE FUNCTION fn_payment_immutable();
 
 -- ---- Scheduled jobs (call from pg_cron every minute) -------------------------
+-- Optional, needs the pg_cron extension (not created here):
+--   SELECT cron.schedule('expire_reservations', '* * * * *',
+--                        'SELECT fn_expire_overdue_reservations()');
+-- Without pg_cron, run the function from any scheduler (cron, Task Scheduler).
 -- 30-minute grace period: expire reservations that were never activated.
 CREATE OR REPLACE FUNCTION fn_expire_overdue_reservations() RETURNS INT
 LANGUAGE plpgsql AS $$

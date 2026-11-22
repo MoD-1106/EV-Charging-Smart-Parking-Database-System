@@ -514,7 +514,9 @@ def manager_reservation():
         sql = ("UPDATE reservation SET reservation_status_code = 'EXPIRED' "
                "WHERE reservation_identifier = %s::uuid "
                "AND reservation_status_code IN ('PENDING', 'CONFIRMED') "
-               "AND start_datetime + INTERVAL '30 minutes' < now() AND ")
+               "AND start_datetime + INTERVAL '30 minutes' < now() "
+               "AND NOT EXISTS (SELECT 1 FROM service_session AS ss "
+               "WHERE ss.reservation_identifier = reservation.reservation_identifier) AND ")
     else:
         abort(400)
     count = db.run(sql + MANAGED_SPACES, (request.form["id"], session["uid"]))

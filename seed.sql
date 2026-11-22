@@ -1,5 +1,5 @@
 -- =============================================================================
--- Smart City EV Charging & Parking Management - mock data (DML) - v0.3
+-- Smart City EV Charging & Parking Management - mock data (DML) - v0.3.1
 -- Run AFTER schema.sql on an EMPTY database:
 --     psql -d evt -v ON_ERROR_STOP=1 -f schema.sql
 --     psql -d evt -v ON_ERROR_STOP=1 -f seed.sql
@@ -13,7 +13,8 @@
 --     which makes trg_session_finish issue the invoice automatically;
 --   * reservations are inserted as CONFIRMED and become FULFILLED through
 --     trg_session_start.
--- History is deterministic (md5-based, no random()): 2026-09-01 .. 2026-10-26.
+-- History is deterministic (md5 of plate + session start, no random() and no
+-- generated UUIDs in any digest): 2026-09-01 .. 2026-10-26.
 -- A few rows relative to now() (open sessions, upcoming bookings) are added
 -- at the end so that "current state" queries return something.
 -- =============================================================================
@@ -342,9 +343,11 @@ FROM (
            END AS status
     FROM (
         SELECT t.transaction_identifier, s.end_datetime,
-               md5(t.session_identifier::TEXT) AS digest
+               md5(v.license_plate_text || ':'
+                   || extract(epoch FROM s.start_datetime)::TEXT) AS digest
         FROM payment_transaction AS t
         JOIN service_session AS s ON s.session_identifier = t.session_identifier
+        JOIN vehicle AS v ON v.vehicle_identifier = s.vehicle_identifier
     ) AS q
 ) AS x
 WHERE p.transaction_identifier = x.transaction_identifier;

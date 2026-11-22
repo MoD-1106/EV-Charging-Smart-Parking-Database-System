@@ -1,6 +1,6 @@
 # Demo web (Flask + PostgreSQL) cho Phase 4
 
-Ứng dụng nối trực tiếp vào CSDL của đồ án (`schema.sql`, `seed.sql` ở thư mục gốc). Mọi quy tắc nghiệp vụ (chống đặt chỗ chồng giờ, đồng bộ trạng thái thiết bị, hóa đơn tự lập, phân công chỉ cho MANAGER) vẫn do CSDL thực thi; lớp web chỉ gọi và dịch lỗi sang tiếng Việt.
+Ứng dụng nối trực tiếp vào CSDL của đồ án (schema.sql, seed.sql ở thư mục cha). Mọi quy tắc nghiệp vụ (chống đặt chỗ chồng giờ, đồng bộ trạng thái thiết bị, hóa đơn tự lập, phân công chỉ cho MANAGER) vẫn do CSDL thực thi; lớp web chỉ gọi và dịch lỗi sang tiếng Việt.
 
 ## Chạy thử
 
@@ -68,4 +68,4 @@ Khung "Phiên đang sạc" chỉ hiện khi tài khoản có phiên chưa kết 
 - Ứng dụng không dùng PostGIS, nên chạy được cả khi CSDL dùng `GEOMETRY` lẫn `POINT`.
 - Các form POST có mã CSRF; phân quyền kiểm tra ở từng route và trong câu SQL (quản lý chỉ sửa được thiết bị thuộc bãi mình phụ trách).
 - Đây là bản demo: chưa có HTTPS, giới hạn số lần đăng nhập, hay cổng thanh toán thật.
-- Hạn chế của lược đồ v0.3 đã nêu trong phần review (chưa có biểu giá cho ô chỉ đỗ xe, chưa có chỉ số sạc theo thời gian, chưa chặn check-in sớm) thể hiện trực tiếp trên giao diện.
+- Hạn chế của lược đồ v0.3.1 đã nêu trong phần review (chưa có biểu giá cho ô chỉ đỗ xe, chưa có chỉ số sạc theo thời gian, chưa chặn check-in sớm) thể hiện trực tiếp trên giao diện.

@@ -1,5 +1,5 @@
 -- =============================================================================
--- Smart City EV Charging & Parking Management - analytical queries - v0.3
+-- Smart City EV Charging & Parking Management - analytical queries - v0.3.1
 -- Run on a database loaded with schema.sql + seed.sql:
 --     psql -d evt -f queries.sql
 -- 12 queries (Q1-Q12) run on plain PostgreSQL; Q13 needs PostGIS.
@@ -38,7 +38,7 @@ LIMIT 10;
 -- Q2. Revenue by facility and tariff band (aggregation + HAVING)
 -- Question : which facility / band combinations earned more than 1,000,000 VND
 --            from successful payments?
--- Features : GROUP BY, SUM/COUNT/AVG, HAVING, FILTER
+-- Features : GROUP BY, SUM/COUNT/AVG, HAVING
 -- Tables   : payment_transaction, tariff_rate, service_session,
 --            charging_equipment, parking_space, parking_facility
 -- -----------------------------------------------------------------------------
