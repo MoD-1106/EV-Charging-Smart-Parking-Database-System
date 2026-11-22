@@ -69,3 +69,6 @@ Khung "Phiên đang sạc" chỉ hiện khi tài khoản có phiên chưa kết 
 - Các form POST có mã CSRF; phân quyền kiểm tra ở từng route và trong câu SQL (quản lý chỉ sửa được thiết bị thuộc bãi mình phụ trách).
 - Đây là bản demo: chưa có HTTPS, giới hạn số lần đăng nhập, hay cổng thanh toán thật.
 - Hạn chế của lược đồ hiện tại đã nêu trong phần review (chưa có biểu giá cho ô chỉ đỗ xe, chưa có chỉ số sạc theo thời gian, chưa chặn check-in sớm) thể hiện trực tiếp trên giao diện.
+
+## Chạy trên GitHub Codespaces
+Bấm **Code → Codespaces → Create codespace**. Thư mục `.devcontainer/` tự dựng PostgreSQL + PostGIS, nạp `schema.sql` và `seed.sql`, tạo tài khoản demo (mật khẩu ở `demo_app/DEMO_ACCOUNTS.md`) và chạy Flask ở cổng 5000 (tab **Ports**). Sau khi Codespace khởi động, chạy kiểm thử bằng `pytest tests`.
