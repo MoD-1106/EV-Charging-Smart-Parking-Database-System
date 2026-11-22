@@ -72,3 +72,5 @@ Khung "Phiên đang sạc" chỉ hiện khi tài khoản có phiên chưa kết 
 
 ## Chạy trên GitHub Codespaces
 Bấm **Code → Codespaces → Create codespace**. Thư mục `.devcontainer/` tự dựng PostgreSQL + PostGIS, nạp `schema.sql` và `seed.sql`, tạo tài khoản demo (mật khẩu ở `demo_app/DEMO_ACCOUNTS.md`) và chạy Flask ở cổng 5000 (tab **Ports**). Sau khi Codespace khởi động, chạy kiểm thử bằng `pytest tests`.
+
+Sau khi Codespace mở, chỉ cần chạy `bash run.sh` trong terminal: script tự cài, đợi CSDL, bật Flask và in đường link mở web.

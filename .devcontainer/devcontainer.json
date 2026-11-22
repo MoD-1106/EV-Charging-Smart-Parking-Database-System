@@ -13,7 +13,7 @@
     "PGDATABASE": "evt"
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  "postStartCommand": "bash .devcontainer/start.sh",
+  "postAttachCommand": "bash .devcontainer/start.sh",
   "forwardPorts": [5000],
   "portsAttributes": {
     "5000": { "label": "EV Charging demo (Flask)", "onAutoForward": "openPreview" }
