@@ -1,4 +1,4 @@
-# TÀI LIỆU QUY TẮC NGHIỆP VỤ & RÀNG BUỘC HỆ THỐNG (BUSINESS RULES) — v0.3.1
+# TÀI LIỆU QUY TẮC NGHIỆP VỤ & RÀNG BUỘC HỆ THỐNG (BUSINESS RULES)
 
 ## Thông tin dự án
 * **Tên dự án:** Smart City EV Charging & Parking Management (Hệ thống Quản lý Bãi đỗ xe và Sạc xe điện (EV) thông minh)
@@ -105,7 +105,7 @@ Hệ thống được xây dựng trên nền tảng cơ sở dữ liệu quan h
   |---|---|
   | `PENDING` | Mới tạo, chờ xác nhận. |
   | `CONFIRMED` | Đã xác nhận; ô đỗ có thể hiển thị `RESERVED` khi đến khung giờ. |
-  | `FULFILLED` | Khách đã đến và **bắt đầu** phiên sạc (thay cho `COMPLETED` ở v0.2, vì trạng thái được đặt lúc bắt đầu chứ không phải lúc kết thúc). |
+  | `FULFILLED` | Khách đã đến và **bắt đầu** phiên sạc (thay cho `COMPLETED` ở bản trước, vì trạng thái được đặt lúc bắt đầu chứ không phải lúc kết thúc). |
   | `CANCELLED` | Khách chủ động hủy. |
   | `EXPIRED` | Hệ thống hủy do quá 30 phút không kích hoạt. |
 * **Tự động hủy quá hạn (Timeout):** hàm `fn_expire_overdue_reservations()` (chạy bằng `pg_cron` mỗi phút) chuyển `PENDING`/`CONFIRMED` có `start_datetime + 30 phút < now()` và chưa có phiên sạc sang `EXPIRED`, sau đó đồng bộ lại cờ `RESERVED` của ô đỗ.

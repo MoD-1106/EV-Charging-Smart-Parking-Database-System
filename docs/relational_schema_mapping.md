@@ -1,4 +1,4 @@
-# ÁNH XẠ LƯỢC ĐỒ QUAN HỆ (RELATIONAL SCHEMA MAPPING) — v0.3.1
+# ÁNH XẠ LƯỢC ĐỒ QUAN HỆ (RELATIONAL SCHEMA MAPPING)
 
 ## Thông tin dự án
 * **Dự án:** #1 Smart City EV Charging & Parking Management (Hệ thống Quản lý Bãi đỗ xe và Sạc xe điện thông minh)
@@ -72,7 +72,7 @@ Khóa chính phía **1** được thêm vào phía **N** làm khóa ngoại.
 | `charging_equipment` | `service_session` | `equipment_identifier` | Có | RESTRICT |
 | `tariff_rate` | `payment_transaction` | `rate_identifier` | Có | RESTRICT |
 
-**Quan hệ đã loại bỏ so với v0.2.1:** `user_account` → `reservation` và `user_account` → `service_session` không còn khóa ngoại riêng. Tài khoản của một lượt đặt hoặc phiên sạc được suy ra qua chủ xe (`vehicle.account_identifier`), tránh dư thừa và phụ thuộc bắc cầu.
+**Quan hệ đã loại bỏ so với bản trước:** `user_account` → `reservation` và `user_account` → `service_session` không còn khóa ngoại riêng. Tài khoản của một lượt đặt hoặc phiên sạc được suy ra qua chủ xe (`vehicle.account_identifier`), tránh dư thừa và phụ thuộc bắc cầu.
 
 ### Bước 5. Quan hệ M:N
 Mỗi quan hệ M:N trở thành một quan hệ trung gian có khóa chính ghép từ hai khóa ngoại.
