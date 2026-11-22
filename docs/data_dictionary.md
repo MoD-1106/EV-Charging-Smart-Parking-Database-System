@@ -1,4 +1,4 @@
-# Từ điển Dữ liệu (Data Dictionary) — v0.3.1
+# Từ điển Dữ liệu (Data Dictionary)
 ## Dự án: Smart City EV Charging & Parking Management (theo ISO/IEC 11179)
 **Nhóm:** M3B | **Môn:** INT1313 Cơ sở dữ liệu
 
@@ -25,7 +25,7 @@ Tên bảng và cột dùng `lowercase snake_case`. Mỗi cột kết thúc bằ
 | `_value` | Giá trị số / tiền tệ | `price_per_kwh_value` |
 | `_number`, `_location` | Số điện thoại, tọa độ | `contact_phone_number` |
 
-Các hậu tố `_amount` ở bản cũ được thống nhất thành `_value`. Các cột đổi tên so với v0.2: `deleted_at → deleted_datetime`, `license_plate → license_plate_text`, `gateway_reference_id → gateway_reference_identifier`.
+Các hậu tố `_amount` ở bản cũ được thống nhất thành `_value`. Các cột đổi tên so với bản trước: `deleted_at → deleted_datetime`, `license_plate → license_plate_text`, `gateway_reference_id → gateway_reference_identifier`.
 
 **Ký hiệu Key Type:** PK, FK, UK. `UK*` = ràng buộc duy nhất **từng phần** (`WHERE deleted_datetime IS NULL`), để bản ghi đã xóa mềm không chiếm khóa.
 

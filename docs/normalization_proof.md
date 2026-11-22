@@ -1,4 +1,4 @@
-# TÀI LIỆU CHỨNG MINH DẠNG CHUẨN (NORMALIZATION PROOFS) — v0.3.1
+# TÀI LIỆU CHỨNG MINH DẠNG CHUẨN (NORMALIZATION PROOFS)
 
 ## Thông tin dự án
 * **Tên dự án:** Smart City EV Charging & Parking Management (Hệ thống Quản lý Bãi đỗ xe và Sạc xe điện (EV) thông minh)
@@ -95,9 +95,9 @@ Quy ước: chỉ liệt kê FD không tầm thường; "→ R" nghĩa là xác 
 | 9 | `service_session` | {session_identifier}, {reservation_identifier} (khi khác NULL) | mỗi khóa → R | BCNF |
 | 10 | `payment_transaction` | {transaction_identifier}, {session_identifier} | mỗi khóa → R | BCNF |
 
-**Điểm khác so với v0.2 (các FD ngầm đã được loại bỏ):**
+**Điểm khác so với bản trước (các FD ngầm đã được loại bỏ):**
 
-1. **`service_session` không còn `account_identifier`.** Ở v0.2, khi `reservation_identifier` khác NULL thì `reservation_identifier → account_identifier` đã tồn tại trong cùng bảng (vế trái không phải khóa) ⇒ vi phạm 3NF/BCNF. Ở v0.3 tài khoản được suy ra qua `vehicle_identifier → account_identifier` (xem bảng `vehicle`), nên `service_session` chỉ còn các FD từ khóa. Lập luận tương tự cho `reservation`.
+1. **`service_session` không còn `account_identifier`.** Trước đây, khi `reservation_identifier` khác NULL thì `reservation_identifier → account_identifier` đã tồn tại trong cùng bảng (vế trái không phải khóa) ⇒ vi phạm 3NF/BCNF. Hiện nay tài khoản được suy ra qua `vehicle_identifier → account_identifier` (xem bảng `vehicle`), nên `service_session` chỉ còn các FD từ khóa. Lập luận tương tự cho `reservation`.
 2. **`service_session.reservation_identifier` là UNIQUE**, nên FD `reservation_identifier → R` (khi khác NULL) là FD từ khóa ứng viên, phù hợp quan hệ 0..1 – 1 trên ERD.
 3. **`tariff_rate` có khóa ứng viên nghiệp vụ** (loại cổng, nhãn khung giờ, giờ bắt đầu, công suất tối thiểu) và ràng buộc `EXCLUDE` chống chồng ô giá. Nhờ đó với mỗi (loại cổng, giờ, công suất) có **đúng một** ô giá.
 4. **`payment_transaction`:** `rate_identifier` không bị xác định bởi một thuộc tính phi khóa nào trong bảng; việc nó "suy ra được" từ giờ bắt đầu phiên và thiết bị là quy tắc nghiệp vụ tại thời điểm xuất hóa đơn. Lưu lại `rate_identifier` và các số tiền thành phần là **snapshot có chủ đích** để hóa đơn bất biến khi bảng giá thay đổi (xem trigger `trg_payment_immutable`). Ràng buộc `transaction_amount_value = energy_amount_value + overtime_amount_value` là CHECK trong dòng, không tạo phụ thuộc bắc cầu giữa các bảng.

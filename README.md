@@ -1,4 +1,4 @@
-# Smart City EV Charging & Parking Management System — v0.3.1
+# Smart City EV Charging & Parking Management System
 
 Cơ sở dữ liệu quan hệ trên **PostgreSQL** để quản lý bãi đỗ xe tích hợp trạm sạc xe điện trong thành phố thông minh: đặt chỗ theo khung giờ, phiên sạc, tính giá động theo loại cổng / công suất / giờ và hóa đơn bất biến.
 
@@ -15,11 +15,11 @@ Cơ sở dữ liệu quan hệ trên **PostgreSQL** để quản lý bãi đỗ 
 10. [Kiểm thử](#kiểm-thử)
 
 ## Thành viên — Nhóm M3B
-| Họ và tên | MSSV | Email | Vai trò |
-|---|---|---|---|
-| Nguyễn Trường Nghị | N24DCCN142 | n24dccn142@student.ptithcm.edu.vn | Project Owner |
-| Phạm Công Đang | N24DCCN102 | n24dccn102@student.ptithcm.edu.vn | Thành viên |
-| Mai Văn Công | N24DCCN100 | n24dccn100@student.ptithcm.edu.vn | Thành viên |
+| Họ và tên | MSSV | Email |
+|---|---|---|
+| Nguyễn Trường Nghị | N24DCCN142 | n24dccn142@student.ptithcm.edu.vn |
+| Phạm Công Đang | N24DCCN102 | n24dccn102@student.ptithcm.edu.vn |
+| Mai Văn Công | N24DCCN100 | n24dccn100@student.ptithcm.edu.vn |
 
 **Lớp:** D24CQCN02-N  **Giảng viên:** Lê Hà Thanh
 **Trường:** Học viện Công nghệ Bưu chính Viễn thông (cơ sở TP.HCM)
@@ -36,8 +36,8 @@ Cơ sở dữ liệu quan hệ trên **PostgreSQL** để quản lý bãi đỗ 
 | `seed.sql` | Dữ liệu mẫu (DML) tất định: 30 tài khoản, 5 bãi, 40 thiết bị, 1.220 phiên sạc, nạp qua trigger |
 | `queries.sql` | 13 truy vấn phân tích (join, subquery, aggregation, window, PostGIS) |
 | `tests.sql` | 33 kiểm thử tự động cho các ràng buộc và trigger |
-| `CHANGELOG.md` | Lịch sử thay đổi: v0.2.1 → v0.3 → v0.3.1 |
-| `database_report_v0.3.1.docx` | Báo cáo Word đã đồng bộ với các file trên (có mục F: Phase 4) |
+| `CHANGELOG.md` | Lịch sử thay đổi giữa các lần cập nhật |
+| `database_report.docx` | Báo cáo Word đã đồng bộ với các file trên (có mục F: Phase 4) |
 | `demo_app/` | Ứng dụng demo Flask + psycopg 3 cho ADMIN / MANAGER / CUSTOMER (Phase 4), xem `demo_app/README_DEMO.md` |
 | `tests/test_app.py` | Kiểm thử pytest cho `demo_app` (không cần kết nối CSDL) |
 | `run_tests.ps1` | Chạy `tests.sql` và pytest trên Windows, ghi kết quả vào `ket_qua/` (không đưa lên Git) |
