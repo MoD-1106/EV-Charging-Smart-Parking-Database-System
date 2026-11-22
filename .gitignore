@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Kết quả chạy test (sinh lại bằng run_tests.ps1)
+ket_qua/
+ket_qua_test.txt
+
+# Mật khẩu demo dạng rõ (sinh bằng demo_app/scripts/create_demo_accounts.py)
+demo_app/DEMO_ACCOUNTS.md
+.env
+
+# Windows / IDE
+*.lnk
+.idea/
+.vscode/

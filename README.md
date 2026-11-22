@@ -17,7 +17,7 @@ Cơ sở dữ liệu quan hệ trên **PostgreSQL** để quản lý bãi đỗ 
 ## Thành viên — Nhóm M3B
 | Họ và tên | MSSV | Email | Vai trò |
 |---|---|---|---|
-| Nguyễn Trường Nghị | N24DCCN142 | n24dccn142@student.ptithcm.edu.vn | Thành viên |
+| Nguyễn Trường Nghị | N24DCCN142 | n24dccn142@student.ptithcm.edu.vn | Project Owner |
 | Phạm Công Đang | N24DCCN102 | n24dccn102@student.ptithcm.edu.vn | Thành viên |
 | Mai Văn Công | N24DCCN100 | n24dccn100@student.ptithcm.edu.vn | Thành viên |
 

@@ -1,4 +1,4 @@
-# ÁNH XẠ LƯỢC ĐỒ QUAN HỆ (RELATIONAL SCHEMA MAPPING)
+# ÁNH XẠ LƯỢC ĐỒ QUAN HỆ (RELATIONAL SCHEMA MAPPING) — v0.3.1
 
 ## Thông tin dự án
 * **Dự án:** #1 Smart City EV Charging & Parking Management (Hệ thống Quản lý Bãi đỗ xe và Sạc xe điện thông minh)
