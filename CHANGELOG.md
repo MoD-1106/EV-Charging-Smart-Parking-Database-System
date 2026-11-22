@@ -1,3 +1,35 @@
+# CHANGELOG — v0.3 → v0.3.1
+
+Sửa theo đợt rà soát đối chiếu báo cáo với mã nguồn.
+
+## Sửa lỗi
+| # | Vấn đề ở v0.3 | Cách sửa ở v0.3.1 |
+|---|---|---|
+| 1 | `seed.sql` chia trạng thái thanh toán theo `md5(session_identifier)`, mà UUID phiên sinh ngẫu nhiên nên mỗi lần nạp cho số khác nhau (báo cáo ghi 1.057/49/36 không tái lập) | Digest lấy từ `md5(biển số xe \|\| epoch(start_datetime))`. Nạp hai lần cho cùng kết quả: SUCCESS 1.070, PENDING 71, FAILED 37, REFUNDED 35; báo cáo cập nhật theo |
+| 2 | `run_tests.ps1` truyền `--junitxml=(Join-Path ...)` nên PowerShell tách tham số, pytest báo thiếu `ket_qua.xml` và không chạy test | Dựng đường dẫn thành chuỗi `"--junitxml=$xmlPath"`, `"--html=$htmlPath"` |
+| 3 | `demo_app`: nút "hủy quá hạn" của manager không kiểm tra lượt đặt đã có phiên sạc như `fn_expire_overdue_reservations` | Thêm `NOT EXISTS (service_session ...)` vào câu UPDATE |
+| 4 | `data_dictionary.md` tiêu đề cột chưa đúng mẫu đề | Đổi thành Attribute Name, Data Type, Key Type, Nullable?, Default Value, Business Rules / Constraints |
+| 5 | `queries.sql` Q2 ghi dùng FILTER nhưng không có | Bỏ khỏi dòng Features |
+| 6 | `schema.sql` nhắc pg_cron nhưng không có lệnh lập lịch | Thêm ví dụ `cron.schedule` (chú thích) |
+
+## Báo cáo Word (`database_report_v0.3.1.docx`)
+- Cập nhật số liệu thanh toán; ghi rõ schema cần PostGIS (PostgreSQL 16 thử bằng `POINT`); mô tả đúng cách sinh dữ liệu tất định.
+- Sửa lỗi gõ trong bảng bao đóng khóa (`contact_phone_number`, `space_identifier`, `license_plate_text`).
+- Ví dụ giá trong từ điển ghi rõ là minh họa, kèm bảng giá thật trong `seed.sql`.
+- Thêm mục F "Tích hợp giao diện và backend (Phase 4)".
+
+## Đồng bộ tài liệu
+- Tiêu đề `schema.sql`, `seed.sql`, `queries.sql` và các file `.md` (`business_rule`, `normalization_proof`, `data_dictionary`, `relational_schema_mapping`) ghi v0.3.1; báo cáo Word cập nhật chú thích ERD và mục hạn chế.
+- `business_rule.md`: bỏ dòng "Thời hạn dự án" (CHANGELOG v0.3 đã ghi là bỏ).
+- `data_dictionary.md` và báo cáo Word: mật khẩu băm bằng scrypt (`werkzeug`), đúng với `demo_app`, thay cho "bcrypt/argon2".
+- `README.md`: mô tả CHANGELOG là lịch sử v0.2.1 → v0.3 → v0.3.1; `README_DEMO.md` và `run_tests.ps1` bỏ tham chiếu tới thư mục `revised_v0.3`.
+
+## Chưa làm
+- Chưa chạy lại pytest trên máy Windows: cần chạy `.\run_tests.ps1` để có kết quả thật cho 38 hàm kiểm thử trong `tests/test_app.py`.
+- Chưa đo hiệu năng (`EXPLAIN ANALYZE`) cho NFR-01, NFR-02, NFR-05.
+
+---
+
 # CHANGELOG — v0.2.1 → v0.3
 
 ## Sửa lỗi thiết kế
