@@ -1,4 +1,4 @@
-# Từ điển Dữ liệu (Data Dictionary) — v0.3
+# Từ điển Dữ liệu (Data Dictionary)
 ## Dự án: Smart City EV Charging & Parking Management (theo ISO/IEC 11179)
 **Nhóm:** M3B | **Môn:** INT1313 Cơ sở dữ liệu
 
