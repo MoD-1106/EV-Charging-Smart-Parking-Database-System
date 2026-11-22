@@ -1,0 +1,29 @@
+{
+  "name": "EV Charging - Flask + PostgreSQL/PostGIS",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "shutdownAction": "stopCompose",
+  "containerEnv": {
+    "DATABASE_URL": "postgresql://postgres:postgres@db:5432/evt",
+    "SECRET_KEY": "codespaces-demo-only",
+    "PGHOST": "db",
+    "PGUSER": "postgres",
+    "PGPASSWORD": "postgres",
+    "PGDATABASE": "evt"
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "bash .devcontainer/start.sh",
+  "forwardPorts": [5000],
+  "portsAttributes": {
+    "5000": { "label": "EV Charging demo (Flask)", "onAutoForward": "openPreview" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-ossdata.vscode-postgresql"
+      ]
+    }
+  }
+}
