@@ -1,4 +1,4 @@
-# TÀI LIỆU CHỨNG MINH DẠNG CHUẨN (NORMALIZATION PROOFS) — v0.3
+# TÀI LIỆU CHỨNG MINH DẠNG CHUẨN (NORMALIZATION PROOFS)
 
 ## Thông tin dự án
 * **Tên dự án:** Smart City EV Charging & Parking Management (Hệ thống Quản lý Bãi đỗ xe và Sạc xe điện (EV) thông minh)
