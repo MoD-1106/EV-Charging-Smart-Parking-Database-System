@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="tabs">{% for k, label in [('overview','Tổng quan'),('tariff','Biểu giá'),('facilities','Bãi & phân công'),('accounts','Tài khoản'),('invoices','Đối soát')] %}<a href="{{ url_for('admin', tab=k) }}" class="{{ 'on' if tab == k }}">{{ label }}</a>{% endfor %}</div>
+{% if tab == 'overview' %}
+<div class="kpis">
+  <div class="kpi"><small>Doanh thu 30 ngày</small><b>{{ kpi.revenue|vnd }}</b></div>
+  <div class="kpi"><small>Phiên sạc 30 ngày</small><b>{{ kpi.sessions }}</b></div>
+  <div class="kpi"><small>Hóa đơn chờ thanh toán</small><b>{{ kpi.pending_invoices }}</b></div>
+  <div class="kpi"><small>Đặt chỗ hết hạn 30 ngày</small><b>{{ kpi.no_shows }}</b></div>
+</div>
+<section class="panel"><h2>Doanh thu theo bãi và khung giá (30 ngày, thành công)</h2><div class="scroll"><table><thead><tr><th>Bãi</th><th>Khung</th><th class="r">Hóa đơn</th><th class="r">Doanh thu</th></tr></thead><tbody>
+{% for r in revenue %}<tr><td>{{ r.facility.replace('EV Hub ', '') }}</td><td><span class="pill {{ r.band }}">{{ BAND_NAME[r.band] }}</span></td><td class="r mono">{{ r.invoices }}</td><td class="r mono">{{ r.revenue|vnd }}</td></tr>{% else %}<tr><td colspan="4" class="muted">Chưa có dữ liệu.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% elif tab == 'tariff' %}
+<section class="panel"><h2>Biểu giá (tariff_rate)</h2><div class="scroll"><table><thead><tr><th>Cổng</th><th>Dải kW</th><th>Khung</th><th>Giờ</th><th class="r">Giá / kWh</th><th class="r">Quá giờ / giờ</th><th></th></tr></thead><tbody>
+{% for t in tariffs %}<tr>
+  <td class="mono">{{ t.conn }}</td><td class="mono">{{ '%g'|format(t.min_kw) }}–{{ '%g'|format(t.max_kw) }}</td><td><span class="pill {{ t.band }}">{{ BAND_NAME[t.band] }}</span></td><td class="mono">{{ t.from_text }}–{{ t.to_text }}</td>
+  <td class="r"><input class="mono" form="tf{{ loop.index }}" name="price" type="number" min="0" step="100" value="{{ '%g'|format(t.price) }}" aria-label="Giá mỗi kWh"></td>
+  <td class="r"><input class="mono" form="tf{{ loop.index }}" name="overtime" type="number" min="0" step="1000" value="{{ '%g'|format(t.overtime) }}" aria-label="Phí quá giờ"></td>
+  <td><form id="tf{{ loop.index }}" method="post" action="{{ url_for('admin_tariff') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ t.id }}"><button class="btn sm" type="submit">Lưu</button></form></td></tr>
+{% endfor %}
+</tbody></table></div></section>
+{% elif tab == 'facilities' %}
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+{% for f in facilities %}
+<section class="panel"><h3>{{ f.name.replace('EV Hub ', '') }}</h3>
+  <div class="kv"><span>Ô đã tạo / sức chứa</span><span class="mono">{{ f.spaces }} / {{ f.capacity }}</span></div>
+  <div class="muted small" style="margin:8px 0 6px">Quản lý phụ trách</div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+  {% for m in f.managers %}<span class="chip">{{ m.name }}<form method="post" action="{{ url_for('admin_assign') }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="facility" value="{{ f.id }}"><input type="hidden" name="manager" value="{{ m.id }}"><input type="hidden" name="action" value="remove"><button type="submit" aria-label="Thu hồi {{ m.name }}">×</button></form></span>{% else %}<span class="muted small">Chưa có.</span>{% endfor %}</div>
+  <form method="post" action="{{ url_for('admin_assign') }}" class="row"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="facility" value="{{ f.id }}">
+    <div class="field" style="margin:0"><select name="manager" aria-label="Chọn quản lý">{% for m in managers %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}</select></div>
+    <div class="field" style="margin:0;flex:0"><button class="btn sm" type="submit">Gán</button></div></form>
+</section>{% endfor %}
+</div>
+{% elif tab == 'accounts' %}
+<div class="cols">
+<section class="panel"><h2>Tài khoản quản lý và quản trị</h2><div class="scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Tạo ngày</th></tr></thead><tbody>
+{% for a in accounts %}<tr><td>{{ a.name }}</td><td class="mono">{{ a.email }}</td><td><span class="pill {{ 'FULFILLED' if a.role == 'MANAGER' else 'PEAK' }}">{{ a.role }}</span></td><td class="mono">{{ a.created }}</td></tr>{% endfor %}
+</tbody></table></div></section>
+<aside class="panel"><h2>Tạo tài khoản mới</h2>
+<form method="post" action="{{ url_for('admin_accounts') }}"><input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="field"><label for="n">Họ tên</label><input id="n" name="name" required maxlength="100"></div>
+  <div class="field"><label for="e">Email</label><input id="e" name="email" type="email" required></div>
+  <div class="field"><label for="p">Số điện thoại</label><input id="p" name="phone" required pattern="\+?[0-9]{8,14}"></div>
+  <div class="field"><label for="r">Vai trò</label><select id="r" name="role"><option value="MANAGER">MANAGER</option><option value="ADMIN">ADMIN</option></select></div>
+  <div class="field"><label for="pw">Mật khẩu (tối thiểu 8 ký tự)</label><input id="pw" name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+  <div class="field"><label for="pw2">Nhập lại mật khẩu</label><input id="pw2" name="password2" type="password" required minlength="8" autocomplete="new-password"></div>
+  <button class="btn" type="submit" style="width:100%">Tạo tài khoản</button>
+  <p class="muted small">Bạn tự đặt mật khẩu và gửi cho người dùng. Hệ thống chỉ lưu bản băm, không hiển thị lại.</p></form></aside>
+</div>
+{% else %}
+<section class="panel"><h2>Giao dịch gần nhất</h2><div class="scroll"><table><thead><tr><th>Thời điểm</th><th>Khách</th><th>Xe</th><th>Khung</th><th class="r">Điện năng</th><th class="r">Quá giờ</th><th class="r">Tổng</th><th>Trạng thái</th></tr></thead><tbody>
+{% for i in invoices %}<tr><td class="mono">{{ i.day_text }}</td><td>{{ i.customer }}</td><td class="mono">{{ i.plate }}</td><td><span class="pill {{ i.band }}">{{ BAND_NAME[i.band] }}</span></td><td class="r mono">{{ i.energy|vnd }}</td><td class="r mono">{{ i.overtime|vnd }}</td><td class="r mono"><b>{{ i.total|vnd }}</b></td><td><span class="pill {{ i.status }}">{{ PAY_NAME[i.status] }}</span></td></tr>{% endfor %}
+</tbody></table></div><p class="muted small" style="margin-top:10px">Số tiền, ô giá và phiên của hóa đơn không sửa được; hóa đơn không xóa được (trg_payment_immutable).</p></section>
+{% endif %}
+{% endblock %}

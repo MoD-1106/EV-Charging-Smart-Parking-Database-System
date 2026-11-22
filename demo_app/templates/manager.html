@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block body %}
+{% if not facilities %}<div class="panel">Bạn chưa được phân công bãi nào. Liên hệ quản trị viên.</div>{% else %}
+<div class="tabs">{% for f in facilities %}<a href="{{ url_for('manager', fac=f.id) }}" class="{{ 'on' if f.id == fac_id }}">{{ f.name.replace('EV Hub ', '') }}</a>{% endfor %}</div>
+<div class="kpis">
+  {% for k in ['OCCUPIED','RESERVED','AVAILABLE','OUTOFSERVICE'] %}<div class="kpi"><small>{{ STATUS_NAME[k] }}</small><b>{{ counts.get(k, 0) }}</b></div>{% endfor %}
+</div>
+<div class="stack">
+{% if alerts or pending %}
+<section class="panel"><h2>Cần xử lý</h2><div class="list">
+  {% for a in alerts %}<div class="alert"><span><b>{{ a.code }}</b> · <span class="mono">{{ a.plate }}</span> chưa đến sau <span data-live="late" data-ms="{{ a.start_ms }}">{{ a.late_min }}</span> phút (hạn {{ GRACE_MIN }} phút)</span>
+    <form method="post" action="{{ url_for('manager_reservation') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ a.id }}"><input type="hidden" name="fac" value="{{ fac_id }}"><input type="hidden" name="action" value="expire"><button class="btn danger sm" type="submit">Hủy quá hạn</button></form></div>{% endfor %}
+  {% for p in pending %}<div class="alert warn"><span><b>{{ p.code }}</b> · <span class="mono">{{ p.plate }} · {{ p.start_text }}–{{ p.end_text }}</span> chờ xác nhận</span>
+    <form method="post" action="{{ url_for('manager_reservation') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ p.id }}"><input type="hidden" name="fac" value="{{ fac_id }}"><input type="hidden" name="action" value="confirm"><button class="btn sm" type="submit">Xác nhận</button></form></div>{% endfor %}
+</div></section>{% endif %}
+<section class="panel"><h2>Sơ đồ bãi</h2>
+<div class="grid">
+{% for s in spaces %}
+  <div class="sp {{ 'off' if s.status == 'OUTOFSERVICE' }}">
+    <div class="head"><span class="id">{{ s.code }}</span><span class="pill {{ s.status }}">{{ STATUS_NAME[s.status] }}</span></div>
+    <div class="muted small">{% if s.conn %}{{ 'DC' if s.conn == 'FAST_DC' else 'AC' }} {{ s.kw|int }} kW · {{ s.eq_status }}{% else %}Chỉ đỗ xe{% endif %}</div>
+    {% if s.plate %}<div class="small mono">{{ s.plate }} · {{ '%.1f'|format(s.kwh) }} kWh · đã sạc <span data-live="elapsed" data-ms="{{ s.since_ms }}">{{ s.since }}</span> (từ {{ s.since }})</div>{% endif %}
+    {% if s.next_booking %}<div class="muted small">Đặt kế tiếp {{ s.next_booking }} (<span data-live="until" data-ms="{{ s.next_ms }}"></span>)</div>{% endif %}
+    {% if s.eq_id and s.eq_status != 'CHARGING' %}
+    <form method="post" action="{{ url_for('manager_equipment') }}" class="acts"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.eq_id }}"><input type="hidden" name="fac" value="{{ fac_id }}">
+      {% if s.eq_status == 'READY' %}<button class="btn danger sm" name="status" value="FAULT">Báo lỗi</button><button class="btn ghost sm" name="status" value="MAINTENANCE">Bảo trì</button>
+      {% else %}<button class="btn sm" name="status" value="READY">Sẵn sàng</button>{% endif %}</form>{% endif %}
+  </div>
+{% endfor %}
+</div></section>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Đăng nhập · EV Charge M3B{% endblock %}
+{% block body %}
+<div class="login panel">
+  <h3 style="margin-bottom:14px">Đăng nhập EV Charge M3B</h3>
+  <form method="post">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" required autofocus autocomplete="username"></div>
+    <div class="field"><label for="password">Mật khẩu</label><input id="password" name="password" type="password" required autocomplete="current-password"></div>
+    <button class="btn" style="width:100%" type="submit">Đăng nhập</button>
+  </form>
+  <p class="muted small" style="margin-top:12px">Chưa có tài khoản? <a href="{{ url_for('register') }}">Đăng ký khách hàng</a></p>
+</div>
+{% endblock %}

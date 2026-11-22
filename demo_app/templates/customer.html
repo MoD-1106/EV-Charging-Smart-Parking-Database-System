@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="cols">
+<div class="stack">
+{% if sessions %}
+<section class="panel">
+  <h2>Phiên đang sạc</h2>
+  <div class="list">
+  {% for x in sessions %}
+    <div class="sess" data-live="session" data-ms="{{ x.start_ms }}" data-kw="{{ x.kw }}" data-price="{{ x.price if x.price is not none else 0 }}" data-cap="{{ x.cap }}">
+      <div class="kv" style="padding-top:0"><b class="mono">{{ x.plate }} · {{ x.code }}</b><span class="muted small">{{ x.facility.replace('EV Hub ', '') }} · từ {{ x.since }}</span></div>
+      <div class="kv"><span>Đã sạc</span><b class="mono"><span data-live="elapsed" data-ms="{{ x.start_ms }}">00:00:00</span></b></div>
+      <div class="kv"><span>Tạm tính {% if x.band %}<span class="pill {{ x.band }}">{{ BAND_NAME[x.band] }}</span>{% endif %}</span><span class="mono"><span data-out="energy"></span> · <b data-out="cost"></b></span></div>
+    </div>
+  {% endfor %}
+  </div>
+  <p class="muted small" style="margin-top:10px">Tạm tính theo công suất định mức × thời gian, không vượt dung lượng pin. Hóa đơn chính thức do hệ thống lập khi phiên kết thúc.</p>
+</section>
+{% endif %}
+<section class="panel">
+  <h2>Tìm và đặt chỗ</h2>
+  <form method="get" class="row" id="search-form" data-start-ms="{{ start_ms if start_ms is not none else '' }}" data-end-ms="{{ end_ms if end_ms is not none else '' }}" data-minutes="{{ minutes }}">
+    <div class="field"><label for="fac">Bãi đỗ</label><select id="fac" name="fac">{% for f in facilities %}<option value="{{ f.id }}" {{ 'selected' if f.id == fac_id }}>{{ f.name }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="day">Ngày</label><input id="day" name="day" type="date" value="{{ day }}"></div>
+    <div class="field"><label for="start">Giờ bắt đầu</label><input id="start" name="start" type="time" step="900" value="{{ start }}"></div>
+    <div class="field"><label for="dur">Thời lượng</label><select id="dur" name="dur">{% for m in [30,60,90,120,180,240] %}<option value="{{ m }}" {{ 'selected' if m == minutes }}>{{ m }} phút</option>{% endfor %}</select></div>
+    <div class="field" style="flex:0"><button class="btn" type="submit">Xem</button></div>
+  </form>
+  {% if spaces %}
+  <div class="grid" style="margin-top:6px">
+  {% for s in spaces %}
+    <div class="sp {{ '' if s.free else 'off' }}">
+      <div class="head"><span class="id">{{ s.code }}</span><span class="pill {{ 'AVAILABLE' if s.free else 'OUTOFSERVICE' }}">{{ 'Trống' if s.free else 'Bận' }}</span></div>
+      <div class="muted small">{% if s.conn %}{{ 'DC' if s.conn == 'FAST_DC' else 'AC' }} {{ s.kw|int }} kW{% else %}Chỉ đỗ xe{% endif %}</div>
+      {% if s.price is not none %}<div class="small"><span class="pill {{ s.band }}">{{ BAND_NAME[s.band] }}</span> <span class="mono">{{ s.price|vnd }}/kWh</span></div>
+      <div class="muted small">Quá giờ: {{ s.ot|vnd }}/giờ</div>{% endif %}
+      {% if s.free %}
+      <div class="small js-preview" data-kw="{{ s.kw if s.conn else 0 }}" data-price="{{ s.price if s.price is not none else '' }}"></div>
+      <form method="post" action="{{ url_for('customer_book') }}" class="acts">
+        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="space" value="{{ s.id }}">
+        <input type="hidden" name="fac" value="{{ fac_id }}"><input type="hidden" name="day" value="{{ day }}">
+        <input type="hidden" name="start" value="{{ start }}"><input type="hidden" name="dur" value="{{ minutes }}">
+        <select name="vehicle" aria-label="Xe" style="padding:4px 6px;font-size:12px">{% for v in vehicles %}<option value="{{ v.id }}" data-kwh="{{ v.kwh }}">{{ v.plate }}</option>{% endfor %}</select>
+        <button class="btn sm js-book" type="submit">Đặt</button>
+      </form>{% endif %}
+    </div>
+  {% endfor %}
+  </div>
+  <p class="muted small" style="margin-top:12px">Một mức giá cho cả phiên, chọn theo giờ bắt đầu sạc. Ô chỉ đỗ xe chưa có biểu giá trong CSDL v0.3.</p>
+  {% endif %}
+</section>
+<section class="panel">
+  <h2>Đặt chỗ của tôi</h2>
+  <div class="scroll"><table><thead><tr><th>Bãi</th><th>Ô</th><th>Xe</th><th>Giờ</th><th>Trạng thái</th><th></th></tr></thead><tbody>
+  {% for r in reservations %}<tr><td>{{ r.facility.replace('EV Hub ', '') }}</td><td class="mono">{{ r.code }}</td><td class="mono">{{ r.plate }}</td><td class="mono">{{ r.start_text }}–{{ r.end_text }}</td><td><span class="pill {{ r.status }}">{{ RES_NAME[r.status] }}</span>{% if r.status in ('PENDING','CONFIRMED') %}<div class="small mono" data-live="reservation" data-ms="{{ r.start_ms }}" data-grace="{{ GRACE_MIN * 60000 }}"></div>{% endif %}</td>
+    <td>{% if r.status in ('PENDING','CONFIRMED') %}<form method="post" action="{{ url_for('customer_cancel') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ r.id }}"><button class="btn ghost sm" type="submit">Hủy</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="6" class="muted">Chưa có đặt chỗ.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+</div>
+<aside class="panel">
+  <h2>Hóa đơn gần đây</h2>
+  <div class="list">
+  {% for i in invoices %}
+    <div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px">
+      <div class="kv" style="padding-top:0"><b class="mono">{{ i.day_text }} · {{ i.plate }}</b><span class="pill {{ i.status }}">{{ PAY_NAME[i.status] }}</span></div>
+      <div class="kv"><span>Điện năng {{ '%.1f'|format(i.kwh) }} kWh</span><span class="mono">{{ i.energy|vnd }}</span></div>
+      {% if i.overtime %}<div class="kv"><span>Phí quá giờ</span><span class="mono">{{ i.overtime|vnd }}</span></div>{% endif %}
+      <div class="kv"><b>Tổng</b><b class="mono">{{ i.total|vnd }}</b></div>
+      {% if i.status == 'PENDING' %}
+      <form method="post" action="{{ url_for('customer_pay') }}" class="row" style="margin-top:6px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ i.id }}">
+        <div class="field" style="margin:0"><select name="method" aria-label="Phương thức">{% for k, v in METHODS.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}</select></div>
+        <div class="field" style="margin:0;flex:0"><button class="btn sm" type="submit">Thanh toán</button></div></form>{% endif %}
+    </div>
+  {% else %}<p class="muted">Chưa có hóa đơn.</p>{% endfor %}
+  </div>
+</aside>
+</div>
+{% endblock %}
