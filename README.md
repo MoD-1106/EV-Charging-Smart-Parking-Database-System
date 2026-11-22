@@ -3,7 +3,7 @@
 Cơ sở dữ liệu quan hệ trên **PostgreSQL** để quản lý bãi đỗ xe tích hợp trạm sạc xe điện trong thành phố thông minh: đặt chỗ theo khung giờ, phiên sạc, tính giá động theo loại cổng / công suất / giờ và hóa đơn bất biến.
 
 ## Thành viên — Nhóm M3B
-* **Nguyễn Trường Nghị** - n24dccn142@student.ptithcm.edu.vn (Project Owner) — truongnghi1106@gmail.com
+* **Nguyễn Trường Nghị** - n24dccn142@student.ptithcm.edu.vn (Project Owner)
 * **Phạm Công Đang** - n24dccn102@student.ptithcm.edu.vn
 * **Mai Văn Công** - n24dccn100@student.ptithcm.edu.vn
 
