@@ -1,0 +1,103 @@
+erDiagram
+    USER_ACCOUNT ||--o{ VEHICLE : "owns"
+    USER_ACCOUNT ||--o{ FACILITY_MANAGER : "is assigned (MANAGER)"
+    PARKING_FACILITY ||--o{ FACILITY_MANAGER : "is managed by"
+    PARKING_FACILITY ||--o{ PARKING_SPACE : "contains"
+    PARKING_SPACE ||--o| CHARGING_EQUIPMENT : "has (1:1 extension)"
+    PARKING_SPACE ||--o{ RESERVATION : "is booked in"
+    VEHICLE ||--o{ RESERVATION : "is booked for"
+    VEHICLE ||--o{ SERVICE_SESSION : "charges in"
+    CHARGING_EQUIPMENT ||--o{ SERVICE_SESSION : "serves"
+    RESERVATION |o--o| SERVICE_SESSION : "is fulfilled by"
+    SERVICE_SESSION ||--|| PAYMENT_TRANSACTION : "is billed by"
+    TARIFF_RATE ||--o{ PAYMENT_TRANSACTION : "prices"
+
+    USER_ACCOUNT {
+        uuid account_identifier PK
+        varchar full_name_text
+        varchar contact_phone_number UK
+        varchar email_address UK
+        varchar password_hash_text
+        varchar role_code "CUSTOMER|MANAGER|ADMIN"
+        timestamptz created_datetime
+        timestamptz deleted_datetime
+    }
+    VEHICLE {
+        uuid vehicle_identifier PK
+        uuid account_identifier FK
+        varchar license_plate_text UK
+        decimal battery_capacity_kwh
+        timestamptz deleted_datetime
+    }
+    PARKING_FACILITY {
+        uuid facility_identifier PK
+        varchar facility_name_text
+        geometry geographic_location
+        varchar address_text
+        int total_capacity_count
+    }
+    FACILITY_MANAGER {
+        uuid manager_identifier PK,FK
+        uuid facility_identifier PK,FK
+    }
+    PARKING_SPACE {
+        uuid space_identifier PK
+        uuid facility_identifier FK
+        varchar space_code "UK with facility"
+        varchar availability_status_code
+        timestamptz deleted_datetime
+    }
+    CHARGING_EQUIPMENT {
+        uuid equipment_identifier PK
+        uuid space_identifier FK,UK
+        varchar evse_identifier UK
+        varchar connector_type_code
+        decimal max_power_kw
+        varchar equipment_status_code
+        timestamptz deleted_datetime
+    }
+    TARIFF_RATE {
+        uuid rate_identifier PK
+        varchar connector_type_code
+        varchar time_band_code
+        time start_time
+        time end_time
+        decimal min_power_kw
+        decimal max_power_kw
+        decimal price_per_kwh_value
+        decimal overtime_fee_per_hour_value
+    }
+    RESERVATION {
+        uuid reservation_identifier PK
+        uuid vehicle_identifier FK
+        uuid space_identifier FK
+        timestamptz start_datetime
+        timestamptz end_datetime
+        varchar reservation_status_code
+        timestamptz created_datetime
+        timestamptz deleted_datetime
+    }
+    SERVICE_SESSION {
+        uuid session_identifier PK
+        uuid reservation_identifier FK,UK
+        uuid vehicle_identifier FK
+        uuid equipment_identifier FK
+        timestamptz start_datetime
+        timestamptz end_datetime
+        timestamptz fully_charged_datetime
+        decimal peak_charging_power_kw
+        decimal consumed_energy_kwh
+    }
+    PAYMENT_TRANSACTION {
+        uuid transaction_identifier PK
+        uuid session_identifier FK,UK
+        uuid rate_identifier FK
+        decimal energy_amount_value
+        decimal overtime_amount_value
+        decimal transaction_amount_value
+        char currency_code
+        varchar payment_method_code
+        varchar gateway_reference_identifier
+        varchar transaction_status_code
+        timestamptz created_datetime
+    }
