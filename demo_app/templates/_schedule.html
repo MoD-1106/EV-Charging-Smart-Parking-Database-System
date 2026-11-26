@@ -1,8 +1,0 @@
-{% set show_facility = False %}
-<h2>Thanh thời gian {{ day.strftime('%d/%m/%Y') }} <span class="muted small">(tự cập nhật mỗi 15 giây; rê chuột vào đoạn màu để xem xe)</span></h2>
-{% include "_timeline.html" %}
-<h2 style="margin-top:18px">Lịch đặt chỗ {{ day.strftime('%d/%m/%Y') }} ({{ bookings|length }})</h2>
-<div class="scroll"><table><thead><tr><th>Giờ</th><th>Ô</th><th>Biển số</th><th class="r">Pin xe</th><th>Khách hàng</th><th>Điện thoại</th><th>Email</th><th>Trạng thái</th></tr></thead><tbody>
-{% for b in bookings %}<tr class="{{ 'muted' if b.status in ('CANCELLED', 'EXPIRED') }}"><td class="mono">{{ b.start_text }}–{{ b.end_text }}</td><td class="mono">{{ b.code }}</td><td class="mono">{{ b.plate }}</td><td class="r mono">{{ '%g'|format(b.battery) }} kWh</td><td>{{ b.customer }}</td><td class="mono">{{ b.phone }}</td><td class="mono small">{{ b.email }}</td><td><span class="pill {{ b.status }}">{{ RES_NAME[b.status] }}</span></td></tr>
-{% else %}<tr><td colspan="8" class="muted">Không có lượt đặt trong ngày.</td></tr>{% endfor %}
-</tbody></table></div>
