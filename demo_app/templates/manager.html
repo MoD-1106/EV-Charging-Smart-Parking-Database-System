@@ -6,28 +6,78 @@
   {% for k in ['OCCUPIED','RESERVED','AVAILABLE','OUTOFSERVICE'] %}<div class="kpi"><small>{{ STATUS_NAME[k] }}</small><b>{{ counts.get(k, 0) }}</b></div>{% endfor %}
 </div>
 <div class="stack">
-{% if alerts or pending %}
+{% if invoice %}
+<section class="panel" style="border:2px solid var(--accent)"><h2>Chi tiết hóa đơn vừa lập</h2>
+  <div class="cols" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
+  <div>
+    <div class="kv"><span>Khách hàng</span><b>{{ invoice.customer }}</b></div>
+    <div class="kv"><span>Điện thoại</span><span class="mono">{{ invoice.phone }}</span></div>
+    <div class="kv"><span>Biển số</span><b class="mono">{{ invoice.plate }}</b></div>
+    <div class="kv"><span>Bãi · ô · trụ</span><span>{{ invoice.facility.replace('EV Hub ', '') }} · {{ invoice.code }} · <span class="mono">{{ invoice.evse }}</span> ({{ invoice.kw|int }} kW)</span></div>
+    <div class="kv"><span>Bắt đầu → kết thúc</span><span class="mono">{{ invoice.start_text }} → {{ invoice.end_text }} ({{ invoice.minutes }} phút)</span></div>
+    <div class="kv"><span>Pin</span><span class="mono">{{ '%g'|format(invoice.pct_start) }}% → {{ '%g'|format(invoice.pct_end) }}%</span></div>
+    <div class="kv"><span>Pin đầy lúc</span><span class="mono">{{ invoice.full_text or 'Chưa đầy' }}</span></div>
+  </div>
+  <div>
+    <div class="kv"><span>Khung giá</span><span class="pill {{ invoice.band }}">{{ BAND_NAME[invoice.band] }}</span></div>
+    <div class="kv"><span>Điện năng</span><span class="mono">{{ '%.2f'|format(invoice.kwh) }} kWh × {{ invoice.price|vnd }}</span></div>
+    <div class="kv"><span>Tiền điện</span><b class="mono">{{ invoice.energy|vnd }}</b></div>
+    <div class="kv"><span>Quá giờ</span><span class="mono">{{ '%.2f'|format(invoice.overtime_hours) }} giờ × {{ invoice.fee|vnd }}</span></div>
+    <div class="kv"><span>Phí quá giờ</span><b class="mono">{{ invoice.overtime|vnd }}</b></div>
+    <div class="kv" style="font-size:1.1em"><b>Tổng cộng</b><b class="mono">{{ invoice.total|vnd }}</b></div>
+    <div class="kv"><span>Trạng thái</span><span class="pill {{ invoice.status }}">{{ PAY_NAME[invoice.status] }}</span></div>
+    <div class="kv"><span>Lập lúc</span><span class="mono">{{ invoice.created_text }}</span></div>
+  </div>
+  </div>
+  <div style="margin-top:10px;display:flex;gap:8px"><button class="btn ghost sm" type="button" onclick="window.print()">In hóa đơn</button><a class="btn sm" style="text-decoration:none" href="{{ url_for('manager', fac=fac_id) }}">Đóng</a></div>
+</section>
+{% endif %}
+{% if alerts or pending or arrivals or payments %}
 <section class="panel"><h2>Cần xử lý</h2><div class="list">
+  {% for t in payments %}<div class="alert warn"><span><b>{{ t.code }}</b> · <span class="mono">{{ t.plate }}</span> · {{ t.customer }} đã thanh toán <b class="mono">{{ t.total|vnd }}</b> ({{ METHODS.get(t.method, t.method) }}, mã <span class="mono">{{ t.ref }}</span>), chờ xác nhận</span>
+    <form method="post" action="{{ url_for('manager_payment') }}" style="margin:0;display:flex;gap:6px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ t.id }}"><input type="hidden" name="fac" value="{{ fac_id }}"><button class="btn sm" name="action" value="confirm" type="submit">Xác nhận</button><button class="btn danger sm" name="action" value="reject" type="submit">Từ chối</button></form></div>{% endfor %}
+  {% for g in arrivals %}<div class="alert warn"><span><b>{{ g.code }}</b> · <span class="mono">{{ g.plate }}</span> đặt chỗ đỗ lúc {{ g.start_text }}</span>
+    <form method="post" action="{{ url_for('manager_reservation') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ g.id }}"><input type="hidden" name="fac" value="{{ fac_id }}"><input type="hidden" name="action" value="arrive"><button class="btn sm" type="submit">Khách đã đến</button></form></div>{% endfor %}
   {% for a in alerts %}<div class="alert"><span><b>{{ a.code }}</b> · <span class="mono">{{ a.plate }}</span> chưa đến sau <span data-live="late" data-ms="{{ a.start_ms }}">{{ a.late_min }}</span> phút (hạn {{ GRACE_MIN }} phút)</span>
     <form method="post" action="{{ url_for('manager_reservation') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ a.id }}"><input type="hidden" name="fac" value="{{ fac_id }}"><input type="hidden" name="action" value="expire"><button class="btn danger sm" type="submit">Hủy quá hạn</button></form></div>{% endfor %}
   {% for p in pending %}<div class="alert warn"><span><b>{{ p.code }}</b> · <span class="mono">{{ p.plate }} · {{ p.start_text }}–{{ p.end_text }}</span> chờ xác nhận</span>
     <form method="post" action="{{ url_for('manager_reservation') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ p.id }}"><input type="hidden" name="fac" value="{{ fac_id }}"><input type="hidden" name="action" value="confirm"><button class="btn sm" type="submit">Xác nhận</button></form></div>{% endfor %}
 </div></section>{% endif %}
+<section class="panel">
+<form method="get" action="{{ url_for('manager') }}" class="row" style="margin-bottom:10px"><input type="hidden" name="fac" value="{{ fac_id }}">
+  <div class="field" style="flex:0 0 auto"><label for="day">Xem ngày</label><input id="day" type="date" name="day" value="{{ day.isoformat() }}"></div>
+  <div class="field" style="flex:0"><button class="btn ghost" type="submit">Xem</button></div></form>
+<div data-refresh="{{ url_for('manager_schedule', fac=fac_id, day=day.isoformat()) }}">{% include "_schedule.html" %}</div></section>
+<section class="panel"><h2>Xe đang đỗ <span class="muted small">(tự cập nhật mỗi 15 giây)</span></h2>
+<div class="scroll"><table><thead><tr><th>Ô</th><th>Biển số</th><th>Chủ xe</th><th>Loại</th><th>Từ</th><th>Đã đỗ</th><th>Pin / điện năng</th></tr></thead>
+<tbody data-refresh="{{ url_for('manager_parked', fac=fac_id) }}">{% include "_parked.html" %}</tbody></table></div></section>
 <section class="panel"><h2>Sơ đồ bãi</h2>
 <div class="grid">
 {% for s in spaces %}
   <div class="sp {{ 'off' if s.status == 'OUTOFSERVICE' }}">
     <div class="head"><span class="id">{{ s.code }}</span><span class="pill {{ s.status }}">{{ STATUS_NAME[s.status] }}</span></div>
     <div class="muted small">{% if s.conn %}{{ 'DC' if s.conn == 'FAST_DC' else 'AC' }} {{ s.kw|int }} kW · {{ s.eq_status }}{% else %}Chỉ đỗ xe{% endif %}</div>
-    {% if s.plate %}<div class="small mono">{{ s.plate }} · {{ '%.1f'|format(s.kwh) }} kWh · đã sạc <span data-live="elapsed" data-ms="{{ s.since_ms }}">{{ s.since }}</span> (từ {{ s.since }})</div>{% endif %}
+    {% if s.plate %}<div class="small mono">{{ s.plate }} · pin {{ '%.1f'|format(s.pct_now) }}% · {{ '%.1f'|format(s.kwh) }} kWh · đã sạc <span data-live="elapsed" data-ms="{{ s.since_ms }}">{{ s.since }}</span> (từ {{ s.since }})</div>
+    <div class="muted small">{% if s.full_text %}Đã đầy lúc {{ s.full_text }}, đang tính phí quá giờ{% elif s.eta_text %}Dự kiến đầy lúc {{ s.eta_text }}{% endif %}</div>{% endif %}
     {% if s.next_booking %}<div class="muted small">Đặt kế tiếp {{ s.next_booking }} (<span data-live="until" data-ms="{{ s.next_ms }}"></span>)</div>{% endif %}
+    {% if s.session_id %}
+    <form method="post" action="{{ url_for('manager_session_stop') }}" class="acts"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.session_id }}"><input type="hidden" name="fac" value="{{ fac_id }}">
+      <button class="btn sm" type="submit">Kết thúc sạc</button></form>
+    {% elif s.eq_id and s.eq_status == 'READY' and s.status != 'OUTOFSERVICE' %}
+    <form method="post" action="{{ url_for('manager_session_start') }}" class="acts"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.eq_id }}"><input type="hidden" name="fac" value="{{ fac_id }}">
+      <input class="mini mono" name="plate" list="plates" required maxlength="20" autocomplete="off" placeholder="Biển số" aria-label="Biển số xe" value="{{ s.due_plate or '' }}">
+      <input class="mini" name="pct" type="number" min="0" max="99" step="1" required placeholder="% pin" aria-label="% pin lúc cắm sạc">
+      <button class="btn sm" type="submit">Bắt đầu sạc</button></form>
+    {% endif %}
     {% if s.eq_id and s.eq_status != 'CHARGING' %}
     <form method="post" action="{{ url_for('manager_equipment') }}" class="acts"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.eq_id }}"><input type="hidden" name="fac" value="{{ fac_id }}">
       {% if s.eq_status == 'READY' %}<button class="btn danger sm" name="status" value="FAULT">Báo lỗi</button><button class="btn ghost sm" name="status" value="MAINTENANCE">Bảo trì</button>
       {% else %}<button class="btn sm" name="status" value="READY">Sẵn sàng</button>{% endif %}</form>{% endif %}
   </div>
 {% endfor %}
-</div></section>
 </div>
+<p class="muted small" style="margin-top:10px">Điện năng tự tính: công suất trụ × thời gian × hiệu suất 90 %, từ % pin lúc cắm đến khi đầy. Kết thúc sạc thì hóa đơn lập theo số liệu này.</p></section>
+</div>
+<datalist id="plates">{% for v in plates %}<option value="{{ v.plate }}" label="{{ v.owner }}">{{ v.owner }}</option>{% endfor %}</datalist>
 {% endif %}
 {% endblock %}

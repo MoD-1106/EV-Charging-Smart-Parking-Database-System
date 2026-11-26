@@ -15,11 +15,11 @@ Cơ sở dữ liệu quan hệ trên **PostgreSQL** để quản lý bãi đỗ 
 10. [Kiểm thử](#kiểm-thử)
 
 ## Thành viên — Nhóm M3B
-| Họ và tên | MSSV | Email |
-|---|---|---|
-| Nguyễn Trường Nghị | N24DCCN142 | n24dccn142@student.ptithcm.edu.vn |
-| Phạm Công Đang | N24DCCN102 | n24dccn102@student.ptithcm.edu.vn |
-| Mai Văn Công | N24DCCN100 | n24dccn100@student.ptithcm.edu.vn |
+| Họ và tên | MSSV | Email | Vai trò |
+|---|---|---|---|
+| Nguyễn Trường Nghị | N24DCCN142 | n24dccn142@student.ptithcm.edu.vn | Thành viên |
+| Phạm Công Đang | N24DCCN102 | n24dccn102@student.ptithcm.edu.vn | Thành viên |
+| Mai Văn Công | N24DCCN100 | n24dccn100@student.ptithcm.edu.vn | Thành viên |
 
 **Lớp:** D24CQCN02-N  **Giảng viên:** Lê Hà Thanh
 **Trường:** Học viện Công nghệ Bưu chính Viễn thông (cơ sở TP.HCM)
@@ -29,18 +29,22 @@ Cơ sở dữ liệu quan hệ trên **PostgreSQL** để quản lý bãi đỗ 
 |---|---|
 | `docs/business_rule.md` | Quy tắc nghiệp vụ, RBAC, đặc tả yêu cầu FR/NFR (ISO 29148) |
 | `docs/ERD_Diagram.png`, `docs/erd.mmd` | ERD ký hiệu IE Crow's Foot (nguồn Mermaid) |
+| `EER_Diagram.png`, `eer.mmd` | Sơ đồ EER ký hiệu Elmasri và mã Mermaid |
+| `docs/eer_mapping_appendix.md` | Phụ lục ánh xạ EER sang sơ đồ vật lý |
 | `docs/data_dictionary.md` | Từ điển dữ liệu 10 bảng (ISO/IEC 11179) |
 | `docs/normalization_proof.md` | Chứng minh chuẩn hóa tới BCNF |
 | `schema.sql` | DDL, ràng buộc, trigger, hàm (PostgreSQL 14+, PostGIS, btree_gist) |
-| `docs/relational_schema_mapping.md` | Ánh xạ ERD → lược đồ quan hệ (10 quan hệ, 12 khóa ngoại) |
+| `docs/relational_schema_mapping.md` | Ánh xạ ERD → lược đồ quan hệ (10 quan hệ, 13 khóa ngoại) |
 | `seed.sql` | Dữ liệu mẫu (DML) tất định: 30 tài khoản, 5 bãi, 40 thiết bị, 1.220 phiên sạc, nạp qua trigger |
+| `roles.sql` | Tài khoản CSDL `evc_app` quyền tối thiểu cho web (chạy sau `schema.sql`) |
 | `queries.sql` | 13 truy vấn phân tích (join, subquery, aggregation, window, PostGIS) |
-| `tests.sql` | 33 kiểm thử tự động cho các ràng buộc và trigger |
-| `CHANGELOG.md` | Lịch sử thay đổi giữa các lần cập nhật |
+| `tests.sql` | 117 kiểm thử tự động cho các ràng buộc và trigger |
+| `CHANGELOG.md` | Lịch sử thay đổi |
 | `database_report.docx` | Báo cáo Word đã đồng bộ với các file trên (có mục F: Phase 4) |
 | `demo_app/` | Ứng dụng demo Flask + psycopg 3 cho ADMIN / MANAGER / CUSTOMER (Phase 4), xem `demo_app/README_DEMO.md` |
 | `tests/test_app.py` | Kiểm thử pytest cho `demo_app` (không cần kết nối CSDL) |
 | `run_tests.ps1` | Chạy `tests.sql` và pytest trên Windows, ghi kết quả vào `ket_qua/` (không đưa lên Git) |
+| `chay_web.ps1` | Lệnh chạy web bằng waitress và mở Cloudflare Quick Tunnel cho nhiều người test |
 
 ## Công nghệ và yêu cầu môi trường
 | Thành phần | Phiên bản / ghi chú |
@@ -60,6 +64,7 @@ createdb evt
 psql -d evt -v ON_ERROR_STOP=1 -f schema.sql
 psql -d evt -v ON_ERROR_STOP=1 -f seed.sql
 psql -d evt -f queries.sql
+psql -d evt -v ON_ERROR_STOP=1 -f roles.sql   # tùy chọn: tài khoản quyền tối thiểu cho web
 
 createdb evt_test            # tests.sql dùng CSDL riêng (tự chèn bảng giá, có ROLLBACK)
 psql -d evt_test -f schema.sql
@@ -81,8 +86,8 @@ Lược đồ gồm **10 bảng** (sơ đồ đầy đủ: `docs/ERD_Diagram.png
 | `charging_equipment` | Trụ sạc gắn với một ô đỗ | 1:N `service_session` |
 | `tariff_rate` | Ô giá theo (loại cổng, khung giờ, dải công suất) | 1:N `payment_transaction` |
 | `reservation` | Lượt đặt chỗ theo khung giờ | 0..1:1 `service_session` |
-| `service_session` | Phiên sạc thực tế | 1:1 `payment_transaction` |
-| `payment_transaction` | Hóa đơn, bất biến | N:1 `tariff_rate` |
+| `service_session` | Phiên sạc thực tế | 1:0..1 `payment_transaction` |
+| `payment_transaction` | Hóa đơn, bất biến | N:1 `tariff_rate`; N:1 `user_account` (quản lý xác nhận, `confirmed_by_identifier`) |
 
 Lược đồ đạt **BCNF**; chứng minh ở `docs/normalization_proof.md`. Dữ liệu dư thừa có kiểm soát (trạng thái ô đỗ, tiền hóa đơn, sức chứa) được liệt kê ở mục 11 của `docs/data_dictionary.md`.
 
@@ -91,7 +96,7 @@ Lược đồ đạt **BCNF**; chứng minh ở `docs/normalization_proof.md`. D
 | Tiêu chuẩn | Áp dụng cho | Nơi thể hiện |
 |---|---|---|
 | **ISO/IEC/IEEE 29148** (thay IEEE 830) | Đặc tả yêu cầu: tách yêu cầu người dùng (UR) với yêu cầu hệ thống (FR/NFR), liệt kê quy tắc nghiệp vụ | `docs/business_rule.md` mục 5 |
-| **IE Crow's Foot (ISO/IEC 19505 / Information Engineering)** | Ký hiệu ERD; không dùng EER của Elmasri nên không cần Mapping Appendix | `docs/ERD_Diagram.png`, `docs/erd.mmd` |
+| **IE Crow's Foot (ISO/IEC 19505 / Information Engineering)** | Sơ đồ vật lý chuẩn; sơ đồ khái niệm EER (Elmasri) kèm phụ lục ánh xạ | `docs/ERD_Diagram.png`, `EER_Diagram.png`, `docs/eer_mapping_appendix.md` |
 | **Quy tắc ánh xạ ER → quan hệ (Elmasri & Navathe)** | Ánh xạ thực thể mạnh, 1:1, 1:N, M:N, chuyên biệt hóa, thuộc tính suy diễn | `docs/relational_schema_mapping.md` |
 | **Chuẩn hóa 3NF / BCNF** | Loại bỏ phụ thuộc hàm không xuất phát từ khóa | `docs/normalization_proof.md` |
 | **ISO/IEC 11179** (metadata registry) | Đặt tên cột theo *representation term* (hậu tố); từ điển dữ liệu có đủ kiểu, khóa, nullable, mặc định, ràng buộc | `docs/data_dictionary.md` |
@@ -142,24 +147,25 @@ Ký hiệu khóa trong từ điển dữ liệu: `PK` khóa chính, `FK` khóa n
 | `reservation.reservation_status_code` | `PENDING` → `CONFIRMED` → `FULFILLED` | Chờ xác nhận, đã xác nhận, đã kích hoạt phiên sạc |
 | | `CANCELLED` | Khách hủy |
 | | `EXPIRED` | Hệ thống hủy do quá 30 phút |
-| `payment_transaction.transaction_status_code` | `PENDING`, `SUCCESS`, `FAILED`, `REFUNDED` | Chờ thanh toán, thành công, thất bại, hoàn tiền |
+| `payment_transaction.transaction_status_code` | `PENDING`, `PROCESSING`, `SUCCESS`, `FAILED`, `REFUNDED` | Chờ thanh toán, khách đã trả và chờ quản lý xác nhận, thành công, thất bại (bị từ chối), hoàn tiền |
 | `payment_transaction.payment_method_code` | `CREDIT_CARD`, `E_WALLET`, `BANK_TRANSFER` | Thẻ, ví điện tử, chuyển khoản |
 | `payment_transaction.currency_code` | `VND`, `USD` | Tiền tệ theo ISO 4217 |
 
 ### 3. Biến trong công thức tính hóa đơn
 | Biến | Nguồn | Ý nghĩa |
 |---|---|---|
-| `consumed_energy_kwh` | `service_session` | Điện năng đã sạc (kWh) |
+| `consumed_energy_kwh` | `service_session` | Điện năng đã sạc (kWh), tự tính bằng `fn_session_estimate` khi kết thúc phiên |
+| `start_battery_percent` | `service_session` | % pin lúc cắm sạc do quản lý nhập; thiếu thì coi là 20 % |
 | `price_per_kwh_value` | `tariff_rate` | Đơn giá điện (VND/kWh) của ô giá được chọn |
 | `overtime_fee_per_hour_value` | `tariff_rate` | Phí đỗ quá giờ sau khi sạc đầy (VND/giờ) |
-| `fully_charged_datetime` | `service_session` | Thời điểm pin đầy; `NULL` nghĩa là chưa ghi nhận sạc đầy |
+| `fully_charged_datetime` | `service_session` | Thời điểm pin đầy (tự tính); `NULL` nghĩa là chưa đầy khi kết thúc |
 | `end_datetime` | `service_session` | Thời điểm kết thúc phiên |
 | `overtime_hours` | suy ra | `max(0, end_datetime − fully_charged_datetime)` tính bằng giờ; bằng 0 nếu chưa sạc đầy |
 | `energy_amount_value` | `payment_transaction` | Tiền điện = `consumed_energy_kwh × price_per_kwh_value` |
 | `overtime_amount_value` | `payment_transaction` | Tiền quá giờ = `overtime_hours × overtime_fee_per_hour_value` |
 | `transaction_amount_value` | `payment_transaction` | Tổng tiền = `energy_amount_value + overtime_amount_value` (ràng buộc `CHECK`) |
 
-Ô giá được chọn bằng `fn_select_tariff` theo ba điều kiện: loại cổng của thiết bị, **giờ bắt đầu phiên** (giờ địa phương `Asia/Ho_Chi_Minh`) nằm trong `[start_time, end_time)`, và `charging_equipment.max_power_kw` nằm trong `[min_power_kw, max_power_kw)`. Một phiên chỉ áp dụng một ô giá, kể cả khi kéo dài qua nhiều khung giờ.
+Ô giá được chọn bằng `fn_select_tariff` theo ba điều kiện: loại cổng của thiết bị, **giờ bắt đầu phiên** (giờ địa phương `Asia/Ho_Chi_Minh`) nằm trong `[start_time, end_time)`, và `charging_equipment.max_power_kw` nằm trong `[min_power_kw, max_power_kw)`. Một phiên chỉ áp dụng một ô giá, kể cả khi kéo dài qua nhiều khung giờ. Đơn giá được chốt lúc bắt đầu sạc, đổi biểu giá sau đó không ảnh hưởng.
 
 ### 4. Hằng số và tham số hệ thống
 | Tên | Giá trị | Ý nghĩa |
@@ -175,7 +181,7 @@ Ký hiệu khóa trong từ điển dữ liệu: `PK` khóa chính, `FK` khóa n
 | Biến | Mặc định | Ý nghĩa |
 |---|---|---|
 | `DATABASE_URL` | `postgresql://postgres@localhost:5432/evt` | Chuỗi kết nối PostgreSQL |
-| `SECRET_KEY` | `dev-only-change-me` | Khóa ký phiên Flask và mã CSRF; **phải đổi khi chạy thật** |
+| `SECRET_KEY` | sinh ngẫu nhiên mỗi lần chạy | Khóa ký phiên Flask và mã CSRF; đặt cố định khi chạy thật |
 
 ### 6. Từ viết tắt
 | Viết tắt | Nghĩa |
@@ -195,7 +201,7 @@ Ký hiệu khóa trong từ điển dữ liệu: `PK` khóa chính, `FK` khóa n
 
 ### 1. Người dùng & phương tiện
 - `user_account` đăng ký bằng email và số điện thoại (duy nhất trong tài khoản chưa xóa); vai trò `CUSTOMER`, `MANAGER`, `ADMIN`.
-- Một khách sở hữu nhiều `vehicle` (biển số duy nhất). Lượt đặt chỗ và phiên sạc luôn gắn với một xe.
+- Một khách sở hữu nhiều `vehicle` trong CSDL (biển số duy nhất); khách đăng ký kèm xe đầu tiên và thêm xe khác ở mục "Xe của tôi". Lượt đặt chỗ và phiên sạc luôn gắn với một xe.
 - Chỉ `ADMIN` phân công `MANAGER` phụ trách một hoặc nhiều `parking_facility`.
 
 ### 2. Hạ tầng & trạng thái
@@ -207,23 +213,27 @@ Ký hiệu khóa trong từ điển dữ liệu: `PK` khóa chính, `FK` khóa n
 - Đặt chỗ được khi ô không `OUTOFSERVICE` và **khung giờ không chồng** lượt đặt đang giữ chỗ (`EXCLUDE` GiST trên `tstzrange`).
 - Trạng thái: `PENDING` → `CONFIRMED` → `FULFILLED`; hoặc `CANCELLED` (khách hủy) / `EXPIRED` (hệ thống hủy).
 - **Quá 30 phút** kể từ giờ bắt đầu mà chưa kích hoạt phiên sạc ⇒ `EXPIRED`, ô đỗ được giải phóng và khung giờ được trả lại.
+- Trên web: đặt trước tối đa 30 ngày, giữ tối đa 3 lượt, không đặt khi còn hóa đơn chưa trả. Ô chỉ đỗ xe được quản lý ghi nhận khách đến.
+- Lượt đặt không sửa được ô, xe, giờ; muốn đổi thì hủy và đặt lại.
 
 ### 4. Giá động & thanh toán
 - `tariff_rate` theo (loại cổng, khung giờ, dải công suất); khung giờ phủ kín 24 giờ: cao điểm 17:00–20:00, thấp điểm 22:00–05:00, còn lại giờ thường. Mức giá chọn theo **giờ bắt đầu phiên**.
 - Hóa đơn:
 
   ```text
-  Tổng = (consumed_energy_kwh × price_per_kwh_value) + (giờ đỗ quá sau khi sạc đầy × overtime_fee_per_hour_value)
+  Tổng = (consumed_energy_kwh × applied_price_per_kwh_value) + (giờ đỗ quá sau khi sạc đầy × applied_overtime_fee_per_hour_value)
   ```
 
+- Điện năng tự tính: công suất trụ × thời gian × hiệu suất 90 %, bắt đầu từ % pin lúc cắm sạc (quản lý nhập) và dừng khi pin đầy (`fn_session_estimate`); thời điểm đầy pin và phí quá giờ cũng tự tính.
 - Mỗi phiên kết thúc tự tạo đúng một `payment_transaction` (1:1); hóa đơn bất biến, không xóa được.
+- Khách thanh toán thì hóa đơn chờ xác nhận (`PROCESSING`); chỉ quản lý của bãi nơi khách sạc xác nhận (`SUCCESS`) hoặc từ chối (`FAILED`), CSDL ghi người và thời điểm xác nhận. Còn hóa đơn chưa xác nhận thì không đặt chỗ mới.
 
 ### 5. Phân quyền (RBAC)
 | Vai trò | Quyền chính |
 |---|---|
-| `CUSTOMER` | Quản lý xe của mình, tìm ô trống, đặt và hủy chỗ, xem và thanh toán hóa đơn của mình |
-| `MANAGER` | Xem sơ đồ ô và thiết bị của bãi được phân công, báo `FAULT`/`MAINTENANCE`, xác nhận hoặc hủy lượt đặt |
-| `ADMIN` | Quản lý bãi, ô, thiết bị, phân công MANAGER, cấu hình biểu giá, xem doanh thu và đối soát |
+| `CUSTOMER` | Đăng ký kèm xe đầu tiên, thêm xe, tìm ô trống, đặt và hủy chỗ, xem và thanh toán hóa đơn của mình (chờ quản lý xác nhận) |
+| `MANAGER` | Ở bãi được phân công: xem sơ đồ, đổi trạng thái thiết bị, xác nhận hoặc hủy quá hạn đặt chỗ, ghi nhận khách đến ô chỉ đỗ xe, bắt đầu phiên sạc (chọn biển số từ danh sách, nhập % pin) và kết thúc phiên (điện năng tự tính), xác nhận hoặc từ chối thanh toán của khách, xem danh sách xe đang đỗ, lịch đặt chỗ kèm thông tin xe và khách, thanh thời gian từng ô |
+| `ADMIN` | Phân công MANAGER, tạo tài khoản MANAGER/ADMIN, xem và đặt lại mật khẩu tài khoản, xóa và khôi phục (30 phút) tài khoản MANAGER/CUSTOMER, sửa biểu giá, xem doanh thu, đối soát hóa đơn và đối soát lịch đặt theo thời gian thực |
 
 Ma trận đầy đủ ở mục 3 của `docs/business_rule.md`.
 
@@ -244,13 +254,29 @@ Ma trận đầy đủ ở mục 3 của `docs/business_rule.md`.
 | `trg_equipment_status_sync` | Thiết bị `FAULT`/`MAINTENANCE` ⇒ ô `OUTOFSERVICE` | FR-05 |
 | `trg_space_capacity` | Chặn thêm ô vượt sức chứa của bãi | FR-06 |
 | `trg_facility_manager_role` | Chỉ tài khoản `MANAGER` chưa xóa được phân công bãi | FR-07 |
+| `trg_vehicle_owner_role` | Chỉ tài khoản `CUSTOMER` chưa xóa được sở hữu xe | RBAC |
+| `ex_reservation_vehicle_no_overlap`, `ux_service_session_open_vehicle` | Một xe không giữ hai ô chồng giờ, không sạc ở hai trụ cùng lúc | FR-01 |
+| `ck_reservation_duration` | Một lượt đặt dài tối đa 24 giờ | FR-01 |
+| `trg_reservation_status_flow` | Lượt đặt đã hủy, hết hạn hoặc đã sạc không đổi lại được | FR-02 |
+| `trg_reservation_refresh` | Cập nhật cờ `RESERVED` ngay khi lượt đặt thay đổi | FR-05 |
+| `trg_session_immutable` | Phiên sạc đã kết thúc là chỉ đọc | FR-04 |
+| `trg_facility_capacity` | Không cho giảm sức chứa xuống dưới số ô đang có | FR-06 |
+| `trg_payment_snapshot` | Hóa đơn ghi sẵn họ tên, điện thoại, email, biển số của khách | FR-08 |
+| `fn_purge_deleted_accounts` | Quá 30 phút thì xóa vĩnh viễn thông tin cá nhân của tài khoản đã xóa | Bảo mật |
 | `trg_payment_immutable` | Cấm xóa hóa đơn, cấm sửa phiên, ô giá, số tiền và tiền tệ | FR-08 |
+| `trg_account_guard` | Giữ vai trò khi còn xe / phân công; không xóa ADMIN; xóa mềm thì dọn lượt đặt, phân công, xe; khôi phục trong 30 phút | RBAC |
+| `trg_reservation_fixed` | Không sửa xe, ô, giờ của lượt đặt | FR-01 |
+| `trg_session_fixed` | Không xóa phiên; xe, trụ, giờ bắt đầu, giá chốt cố định | FR-04 |
+| `trg_session_energy_limit` | Điện năng không vượt pin và công suất × thời gian | FR-04 |
+| `trg_equipment_charging_guard` | Trạng thái trụ `CHARGING` khớp phiên đang mở | FR-05 |
+| `trg_payment_requires_end` | Chỉ lập hóa đơn cho phiên đã kết thúc | FR-04 |
+| `trg_space_removal` | Không xóa ô đang sạc; xóa ô thì hủy lượt đặt sắp tới | FR-06 |
 
 ## Kiểm thử
 | Bộ kiểm thử | Phạm vi | Cách chạy |
 |---|---|---|
-| `tests.sql` | 33 kiểm thử ràng buộc và trigger; chạy trong giao dịch có `ROLLBACK` trên CSDL riêng | `psql -d evt_test -v ON_ERROR_STOP=1 -f tests.sql` |
-| `tests/test_app.py` | pytest cho `demo_app` (API giờ, tính khung giá, trang khách và quản lý, đăng ký, tạo tài khoản admin), không cần CSDL | `pytest tests` |
+| `tests.sql` | 117 kiểm thử ràng buộc và trigger; chạy trong giao dịch có `ROLLBACK` trên CSDL riêng | `psql -d evt_test -v ON_ERROR_STOP=1 -f tests.sql` |
+| `tests/test_app.py` | pytest cho `demo_app` (API giờ, tính khung giá, trang khách và quản lý, đăng ký, thêm xe, tự tính phiên sạc, xe đang đỗ, tạo, xóa tài khoản và mật khẩu ở trang admin), không cần CSDL | `pytest tests` |
 | `run_tests.ps1` | Chạy cả hai bộ trên Windows, ghi kết quả vào `ket_qua/` (không đưa lên Git) | `./run_tests.ps1` |
 
 Lưu ý tương thích: ràng buộc `ON DELETE RESTRICT` báo SQLSTATE `23001` ở PostgreSQL 18 nhưng `23503` ở bản 17 trở xuống; `tests.sql` chấp nhận cả hai mã.

@@ -28,6 +28,12 @@ $failed  = $false
 # ------------------------------------------------------------ 1. SQL tests
 if (-not $SkipSql) {
     Write-Host "`n=== 1. Kiem thu CSDL (tests.sql) ===" -ForegroundColor Cyan
+    # PostgreSQL thuong khong nam trong PATH tren Windows: tim thu muc bin mac dinh
+    if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
+        $pgBin = Get-ChildItem "C:\Program Files\PostgreSQL\*\bin\psql.exe" -ErrorAction SilentlyContinue |
+                 Sort-Object FullName -Descending | Select-Object -First 1
+        if ($pgBin) { $env:Path = "$($pgBin.DirectoryName);$env:Path" }
+    }
     if (-not (Get-Command psql -ErrorAction SilentlyContinue)) {
         Write-Host "Khong tim thay psql. Them thu muc bin cua PostgreSQL vao PATH." -ForegroundColor Red
         $summary.Add("SQL: BO QUA (khong co psql)"); $failed = $true
@@ -75,7 +81,7 @@ if (-not $SkipPytest) {
     $log = Join-Path $outDir "pytest.txt"
     $xmlPath  = Join-Path $outDir "ket_qua.xml"
     $htmlPath = Join-Path $outDir "bao_cao.html"
-    # v3.1: build each option as one quoted string; "--opt=(expr)" was split by
+    # build each option as one quoted string; "--opt=(expr)" was split by
     # PowerShell and pytest received the path as a separate (missing) argument.
     & $py -m pytest tests -v --tb=short "--junitxml=$xmlPath" "--html=$htmlPath" --self-contained-html 2>&1 |
         ForEach-Object { $_.ToString() } | Tee-Object $log

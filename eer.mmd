@@ -1,0 +1,144 @@
+%% EER (Elmasri) - Smart City EV Charging & Parking Management
+%% Chữ nhật: thực thể; hình thoi: quan hệ; bo tròn: thuộc tính (gạch chân: khóa; nét đứt: dẫn xuất)
+%% Đường đậm (===): tham gia toàn phần; đường thường (---): tham gia một phần
+flowchart LR
+    USER_ACCOUNT_a0(["<u>account_identifier</u>"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a1(["full_name_text"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a2(["<u>contact_phone_number</u>"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a3(["<u>email_address</u>"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a4(["password_hash_text"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a5(["role_code"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a6(["created_datetime"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a7(["deleted_datetime"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a8(["purged_datetime"]) --- USER_ACCOUNT
+    USER_ACCOUNT_a9(["password_plain_text"]) --- USER_ACCOUNT
+    VEHICLE_a0(["<u>vehicle_identifier</u>"]) --- VEHICLE
+    VEHICLE_a1(["<u>license_plate_text</u>"]) --- VEHICLE
+    VEHICLE_a2(["battery_capacity_kwh"]) --- VEHICLE
+    VEHICLE_a3(["deleted_datetime"]) --- VEHICLE
+    PARKING_FACILITY_a0(["<u>facility_identifier</u>"]) --- PARKING_FACILITY
+    PARKING_FACILITY_a1(["facility_name_text"]) --- PARKING_FACILITY
+    PARKING_FACILITY_a2(["geographic_location"]) --- PARKING_FACILITY
+    PARKING_FACILITY_a3(["address_text"]) --- PARKING_FACILITY
+    PARKING_FACILITY_a4(["total_capacity_count"]) --- PARKING_FACILITY
+    PARKING_SPACE_a0(["<u>space_identifier</u>"]) --- PARKING_SPACE
+    PARKING_SPACE_a1(["space_code"]) --- PARKING_SPACE
+    PARKING_SPACE_a2(["availability_status_code"]) --- PARKING_SPACE
+    PARKING_SPACE_a3(["deleted_datetime"]) --- PARKING_SPACE
+    CHARGING_EQUIPMENT_a0(["<u>equipment_identifier</u>"]) --- CHARGING_EQUIPMENT
+    CHARGING_EQUIPMENT_a1(["<u>evse_identifier</u>"]) --- CHARGING_EQUIPMENT
+    CHARGING_EQUIPMENT_a2(["connector_type_code"]) --- CHARGING_EQUIPMENT
+    CHARGING_EQUIPMENT_a3(["max_power_kw"]) --- CHARGING_EQUIPMENT
+    CHARGING_EQUIPMENT_a4(["equipment_status_code"]) --- CHARGING_EQUIPMENT
+    CHARGING_EQUIPMENT_a5(["deleted_datetime"]) --- CHARGING_EQUIPMENT
+    RESERVATION_a0(["<u>reservation_identifier</u>"]) --- RESERVATION
+    RESERVATION_a1(["start_datetime"]) --- RESERVATION
+    RESERVATION_a2(["end_datetime"]) --- RESERVATION
+    RESERVATION_a3(["reservation_status_code"]) --- RESERVATION
+    RESERVATION_a4(["created_datetime"]) --- RESERVATION
+    RESERVATION_a5(["deleted_datetime"]) --- RESERVATION
+    SERVICE_SESSION_a0(["<u>session_identifier</u>"]) --- SERVICE_SESSION
+    SERVICE_SESSION_a1(["start_datetime"]) --- SERVICE_SESSION
+    SERVICE_SESSION_a2(["end_datetime"]) --- SERVICE_SESSION
+    SERVICE_SESSION_a3(["fully_charged_datetime"]) --- SERVICE_SESSION
+    SERVICE_SESSION_a4(["peak_charging_power_kw"]) --- SERVICE_SESSION
+    SERVICE_SESSION_a5(["consumed_energy_kwh"]) --- SERVICE_SESSION
+    PAYMENT_TRANSACTION_a0(["<u>transaction_identifier</u>"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a1(["energy_amount_value"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a2(["overtime_amount_value"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a3(["transaction_amount_value"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a4(["currency_code"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a5(["payment_method_code"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a6(["gateway_reference_identifier"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a7(["transaction_status_code"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a8(["created_datetime"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a9(["customer_name_text"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a10(["customer_phone_number"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a11(["customer_email_address"]) --- PAYMENT_TRANSACTION
+    PAYMENT_TRANSACTION_a12(["license_plate_text"]) --- PAYMENT_TRANSACTION
+    TARIFF_RATE_a0(["<u>rate_identifier</u>"]) --- TARIFF_RATE
+    TARIFF_RATE_a1(["connector_type_code"]) --- TARIFF_RATE
+    TARIFF_RATE_a2(["time_band_code"]) --- TARIFF_RATE
+    TARIFF_RATE_a3(["start_time"]) --- TARIFF_RATE
+    TARIFF_RATE_a4(["end_time"]) --- TARIFF_RATE
+    TARIFF_RATE_a5(["min_power_kw"]) --- TARIFF_RATE
+    TARIFF_RATE_a6(["max_power_kw"]) --- TARIFF_RATE
+    TARIFF_RATE_a7(["price_per_kwh_value"]) --- TARIFF_RATE
+    TARIFF_RATE_a8(["overtime_fee_per_hour_value"]) --- TARIFF_RATE
+    SERVICE_SESSION_p1(["applied_price_per_kwh_value"]) --- SERVICE_SESSION
+    SERVICE_SESSION_p2(["applied_overtime_fee_per_hour_value"]) --- SERVICE_SESSION
+    SERVICE_SESSION_a6(["start_battery_percent"]) --- SERVICE_SESSION
+    RESERVATION_d(["reservation_duration"]) --- RESERVATION
+    SERVICE_SESSION_d(["charging_duration"]) --- SERVICE_SESSION
+    P_CUSTOMER["Quyền: đăng ký kèm xe, thêm xe, tìm ô, đặt và hủy chỗ,<br/>xem phiên sạc, xem và thanh toán hóa đơn (chờ quản lý xác nhận)"]
+    P_MANAGER["Quyền ở bãi được phân công: xem sơ đồ, đổi trạng thái trụ,<br/>xác nhận và hủy quá hạn đặt chỗ, bắt đầu sạc (nhập % pin), kết thúc sạc (tự tính kWh),<br/>ghi nhận khách đến, xem xe đang đỗ, lịch đặt và thanh thời gian,<br/>xác nhận hoặc từ chối thanh toán"]
+    P_ADMIN["Quyền: xem doanh thu và hóa đơn, sửa biểu giá,<br/>phân công quản lý bãi, tạo tài khoản MANAGER và ADMIN, xem và đặt lại mật khẩu,<br/>xóa và khôi phục tài khoản MANAGER và CUSTOMER, đối soát lịch đặt"]
+    CUSTOMER -.- P_CUSTOMER
+    MANAGER -.- P_MANAGER
+    ADMIN -.- P_ADMIN
+    OWNS{"OWNS"}
+    CUSTOMER ---|"1"| OWNS
+    OWNS ===|"N"| VEHICLE
+    MANAGES{"MANAGES"}
+    MANAGER ---|"M"| MANAGES
+    MANAGES ---|"N"| PARKING_FACILITY
+    CONTAINS{"CONTAINS"}
+    PARKING_FACILITY ---|"1"| CONTAINS
+    CONTAINS ===|"N"| PARKING_SPACE
+    HAS{"HAS"}
+    PARKING_SPACE ---|"1"| HAS
+    HAS ===|"1"| CHARGING_EQUIPMENT
+    BOOKS{"BOOKS"}
+    PARKING_SPACE ---|"1"| BOOKS
+    BOOKS ===|"N"| RESERVATION
+    MAKES{"MAKES"}
+    VEHICLE ---|"1"| MAKES
+    MAKES ===|"N"| RESERVATION
+    CHARGES{"CHARGES"}
+    VEHICLE ---|"1"| CHARGES
+    CHARGES ===|"N"| SERVICE_SESSION
+    ACTIVATES{"ACTIVATES"}
+    RESERVATION ---|"1"| ACTIVATES
+    ACTIVATES ---|"1"| SERVICE_SESSION
+    SERVES{"SERVES"}
+    CHARGING_EQUIPMENT ---|"1"| SERVES
+    SERVES ===|"N"| SERVICE_SESSION
+    BILLED_BY{"BILLED_BY"}
+    SERVICE_SESSION ---|"1"| BILLED_BY
+    BILLED_BY ===|"1"| PAYMENT_TRANSACTION
+    APPLIES{"APPLIES"}
+    TARIFF_RATE ---|"1"| APPLIES
+    APPLIES ===|"N"| PAYMENT_TRANSACTION
+    CONFIRMS{"CONFIRMS"}
+    MANAGER ---|"1"| CONFIRMS
+    CONFIRMS ---|"N"| PAYMENT_TRANSACTION
+    CONFIRMS_a0(["confirmed_datetime"]) --- CONFIRMS
+    USER_ACCOUNT ===|"role_code"| d(("d"))
+    d ---|"⊂"| ADMIN
+    d ---|"⊂"| MANAGER
+    d ---|"⊂"| CUSTOMER
+    USER_ACCOUNT["USER_ACCOUNT"]
+    VEHICLE["VEHICLE"]
+    PARKING_FACILITY["PARKING_FACILITY"]
+    PARKING_SPACE["PARKING_SPACE"]
+    CHARGING_EQUIPMENT["CHARGING_EQUIPMENT"]
+    RESERVATION["RESERVATION"]
+    SERVICE_SESSION["SERVICE_SESSION"]
+    PAYMENT_TRANSACTION["PAYMENT_TRANSACTION"]
+    TARIFF_RATE["TARIFF_RATE"]
+    ADMIN["ADMIN"]
+    MANAGER["MANAGER"]
+    CUSTOMER["CUSTOMER"]
+    classDef entity fill:#dbe9f6,stroke:#1f3b57,stroke-width:2px,color:#000
+    classDef relation fill:#fdebc8,stroke:#8a6d3b,color:#000
+    classDef attribute fill:#fff,stroke:#555,color:#000
+    classDef derived fill:#fff,stroke:#555,stroke-dasharray:5 5,color:#000
+    class USER_ACCOUNT,VEHICLE,PARKING_FACILITY,PARKING_SPACE,CHARGING_EQUIPMENT,RESERVATION,SERVICE_SESSION,PAYMENT_TRANSACTION,TARIFF_RATE,ADMIN,MANAGER,CUSTOMER entity
+    class OWNS,MANAGES,CONTAINS,HAS,BOOKS,MAKES,CHARGES,ACTIVATES,SERVES,BILLED_BY,APPLIES,CONFIRMS relation
+    class USER_ACCOUNT_a0,USER_ACCOUNT_a1,USER_ACCOUNT_a2,USER_ACCOUNT_a3,USER_ACCOUNT_a4,USER_ACCOUNT_a5,USER_ACCOUNT_a6,USER_ACCOUNT_a7,USER_ACCOUNT_a8,USER_ACCOUNT_a9,VEHICLE_a0,VEHICLE_a1,VEHICLE_a2,VEHICLE_a3,PARKING_FACILITY_a0,PARKING_FACILITY_a1,PARKING_FACILITY_a2,PARKING_FACILITY_a3,PARKING_FACILITY_a4,PARKING_SPACE_a0,PARKING_SPACE_a1,PARKING_SPACE_a2,PARKING_SPACE_a3,CHARGING_EQUIPMENT_a0,CHARGING_EQUIPMENT_a1,CHARGING_EQUIPMENT_a2,CHARGING_EQUIPMENT_a3,CHARGING_EQUIPMENT_a4,CHARGING_EQUIPMENT_a5,RESERVATION_a0,RESERVATION_a1,RESERVATION_a2,RESERVATION_a3,RESERVATION_a4,RESERVATION_a5,SERVICE_SESSION_a0,SERVICE_SESSION_a1,SERVICE_SESSION_a2,SERVICE_SESSION_a3,SERVICE_SESSION_a4,SERVICE_SESSION_a5,SERVICE_SESSION_a6,PAYMENT_TRANSACTION_a0,PAYMENT_TRANSACTION_a4,PAYMENT_TRANSACTION_a5,PAYMENT_TRANSACTION_a6,PAYMENT_TRANSACTION_a7,PAYMENT_TRANSACTION_a8,TARIFF_RATE_a0,TARIFF_RATE_a1,TARIFF_RATE_a2,TARIFF_RATE_a3,TARIFF_RATE_a4,TARIFF_RATE_a5,TARIFF_RATE_a6,TARIFF_RATE_a7,TARIFF_RATE_a8,CONFIRMS_a0 attribute
+    class PAYMENT_TRANSACTION_a1,PAYMENT_TRANSACTION_a2,PAYMENT_TRANSACTION_a3 derived
+
+    class RESERVATION_d,SERVICE_SESSION_d derived
+    classDef note fill:#fff8dc,stroke:#8a6d3b,color:#000
+    class P_CUSTOMER,P_MANAGER,P_ADMIN note
+%% Ràng buộc duy nhất, thời gian và vai trò: xem docs/eer_mapping_appendix.md mục 5

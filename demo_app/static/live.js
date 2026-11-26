@@ -9,7 +9,8 @@
  *   [data-live="until"    data-ms]       time until an instant
  *   [data-live="late"     data-ms]       whole minutes since an instant
  *   [data-live="reservation" data-ms data-grace]   countdown to pickup + grace
- *   [data-live="session" data-ms data-kw data-price data-cap]  running estimate,
+ *   [data-refresh="url"]                 replaced by the HTML at url every 15 s
+ *   [data-live="session" data-ms data-kw data-price data-cap data-pct]  running estimate,
  *        with children [data-out="energy"] and [data-out="cost"]
  *   #search-form[data-start-ms data-end-ms data-minutes]  booking window guards
  */
@@ -123,8 +124,9 @@
         }
       } else if (kind === "session") {
         var hours = Math.max(0, (t - ms) / 3600000);
-        var kwh = (+el.dataset.kw) * hours, cap = +el.dataset.cap;
-        if (cap > 0) { kwh = Math.min(kwh, cap); }
+        var kwh = (+el.dataset.kw) * 0.9 * hours, cap = +el.dataset.cap;
+        var pct = el.dataset.pct === undefined ? 20 : +el.dataset.pct;
+        if (cap > 0) { kwh = Math.min(kwh, cap * (100 - pct) / 100); }
         var e = el.querySelector('[data-out="energy"]'), c = el.querySelector('[data-out="cost"]');
         if (e) { e.textContent = kwh.toFixed(1) + " kWh"; }
         if (c) { c.textContent = vnd(kwh * (+el.dataset.price)); }
@@ -212,6 +214,22 @@
     setInterval(everySecond, 1000);
     setInterval(function () { guardInputs(false); }, 30000);
     setInterval(sync, 60000);
+    setInterval(refreshParts, 15000);
+  }
+
+  /* ----------------------------------------- parts reloaded from the server */
+  function refreshParts() {
+    var parts = document.querySelectorAll("[data-refresh]");
+    Array.prototype.forEach.call(parts, function (el) {
+      fetch(el.dataset.refresh, {credentials: "same-origin", redirect: "manual"})
+        .then(function (r) {
+          // a redirect means the login expired: keep the last rows
+          if (!r.ok || r.type === "opaqueredirect") { throw new Error("skip"); }
+          return r.text();
+        })
+        .then(function (html) { el.innerHTML = html; tickLive(); })
+        .catch(function () { /* keep the last rows */ });
+    });
   }
 
   if (document.readyState === "loading") {

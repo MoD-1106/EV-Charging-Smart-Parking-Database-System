@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block body %}
-<div class="tabs">{% for k, label in [('overview','Tổng quan'),('tariff','Biểu giá'),('facilities','Bãi & phân công'),('accounts','Tài khoản'),('invoices','Đối soát')] %}<a href="{{ url_for('admin', tab=k) }}" class="{{ 'on' if tab == k }}">{{ label }}</a>{% endfor %}</div>
+{% macro password_cell(a) %}<td class="mono" style="white-space:nowrap">{{ a.password or 'Chưa lưu' }}<form method="post" action="{{ url_for('admin_account_password') }}" style="display:inline;margin:0 0 0 6px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn ghost sm" type="submit" title="Tạo mật khẩu mới">Đặt lại</button></form></td>{% endmacro %}
+{% macro delete_button(a) %}<a class="btn danger sm" style="text-decoration:none" href="{{ url_for('admin', tab='accounts', delete=a.id) }}">Xóa</a>{% endmacro %}
+<div class="tabs">{% for k, label in [('overview','Tổng quan'),('tariff','Biểu giá'),('facilities','Bãi & phân công'),('accounts','Tài khoản'),('bookings','Đối soát lịch đặt'),('invoices','Đối soát hóa đơn')] %}<a href="{{ url_for('admin', tab=k) }}" class="{{ 'on' if tab == k }}">{{ label }}</a>{% endfor %}</div>
 {% if tab == 'overview' %}
 <div class="kpis">
   <div class="kpi"><small>Doanh thu 30 ngày</small><b>{{ kpi.revenue|vnd }}</b></div>
@@ -33,11 +35,41 @@
     <div class="field" style="margin:0;flex:0"><button class="btn sm" type="submit">Gán</button></div></form>
 </section>{% endfor %}
 </div>
+{% elif tab == 'bookings' %}
+<section class="panel"><form method="get" action="{{ url_for('admin') }}" class="row"><input type="hidden" name="tab" value="bookings">
+  <div class="field" style="flex:0 0 auto"><label for="rday">Ngày</label><input id="rday" type="date" name="day" value="{{ day.isoformat() }}"></div>
+  <div class="field"><label for="rfac">Bãi</label><select id="rfac" name="fac"><option value="">Tất cả</option>{% for f in facilities %}<option value="{{ f.id }}" {{ 'selected' if f.id == fac_id }}>{{ f.name }}</option>{% endfor %}</select></div>
+  <div class="field"><label for="rst">Trạng thái đặt</label><select id="rst" name="status"><option value="">Tất cả</option>{% for k, v in RES_NAME.items() %}<option value="{{ k }}" {{ 'selected' if k == status }}>{{ v }}</option>{% endfor %}</select></div>
+  <div class="field" style="flex:0"><button class="btn" type="submit">Lọc</button></div></form>
+  <p class="muted small" style="margin-top:8px">Đối soát lịch đặt với trạng thái ô, phiên sạc và hóa đơn; tự cập nhật mỗi 15 giây.</p></section>
+<div class="stack" data-refresh="{{ url_for('admin_reconcile', day=day.isoformat(), fac=fac_id or '', status=status or '') }}">{% include "_reconcile.html" %}</div>
 {% elif tab == 'accounts' %}
+{% if target %}
+<section class="panel" style="margin-bottom:16px;border:2px solid var(--busy)"><h2>Xóa tài khoản {{ target.email }} không?</h2>
+  <p>{{ target.name }} ({{ target.role }})</p>
+  {% if target.charging or target.unpaid %}<div class="flash err" role="alert"><b>Lưu ý trước khi xóa</b><ul>
+    {% if target.charging %}<li>Khách đang sạc xe {{ target.charging }}. Quản lý vẫn phải kết thúc phiên để lập hóa đơn.</li>{% endif %}
+    {% if target.unpaid %}<li>Khách còn {{ target.unpaid }} hóa đơn chưa trả, tổng {{ target.owed|vnd }}. Sau khi xóa, khách không đăng nhập được để thanh toán.</li>{% endif %}
+  </ul></div>{% endif %}
+  <p class="muted small">{% if target.role == 'MANAGER' %}Các bãi đang phụ trách sẽ bị thu hồi (khôi phục tài khoản thì phải gán lại).{% else %}Lượt đặt sắp tới sẽ bị hủy (khôi phục không lấy lại lượt đặt), xe ngừng sử dụng.{% endif %} Khôi phục được trong 30 phút, sau đó xóa vĩnh viễn; thông tin trên hóa đơn được giữ lại.</p>
+  <form method="post" action="{{ url_for('admin_account_delete') }}" style="display:flex;gap:8px;margin:0">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ target.id }}"><input type="hidden" name="ack" value="1">
+    <button class="btn danger" type="submit">Xóa tài khoản</button><a class="btn ghost" style="text-decoration:none" href="{{ url_for('admin', tab='accounts') }}">Không xóa</a></form></section>
+{% endif %}
 <div class="cols">
-<section class="panel"><h2>Tài khoản quản lý và quản trị</h2><div class="scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Tạo ngày</th></tr></thead><tbody>
-{% for a in accounts %}<tr><td>{{ a.name }}</td><td class="mono">{{ a.email }}</td><td><span class="pill {{ 'FULFILLED' if a.role == 'MANAGER' else 'PEAK' }}">{{ a.role }}</span></td><td class="mono">{{ a.created }}</td></tr>{% endfor %}
+<div style="display:grid;gap:16px;align-content:start;min-width:0">
+<section class="panel"><h2>Tài khoản quản lý và quản trị</h2><div class="scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Mật khẩu</th><th>Vai trò</th><th>Tạo ngày</th><th></th></tr></thead><tbody>
+{% for a in accounts %}<tr><td>{{ a.name }}</td><td class="mono">{{ a.email }}</td>{{ password_cell(a) }}<td><span class="pill {{ 'FULFILLED' if a.role == 'MANAGER' else 'PEAK' }}">{{ a.role }}</span></td><td class="mono">{{ a.created }}</td><td>{% if a.role == 'MANAGER' %}{{ delete_button(a) }}{% endif %}</td></tr>{% endfor %}
 </tbody></table></div></section>
+<section class="panel"><h2>Tài khoản khách hàng ({{ customers|length }})</h2><div class="scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Mật khẩu</th><th>Điện thoại</th><th>Xe</th><th>Tạo ngày</th><th></th></tr></thead><tbody>
+{% for a in customers %}<tr><td>{{ a.name }}</td><td class="mono">{{ a.email }}</td>{{ password_cell(a) }}<td class="mono">{{ a.phone }}</td><td class="mono">{{ a.plates or '—' }}</td><td class="mono">{{ a.created }}</td><td>{{ delete_button(a) }}</td></tr>{% else %}<tr><td colspan="7" class="muted">Chưa có khách hàng.</td></tr>{% endfor %}
+</tbody></table></div><p class="muted small" style="margin-top:10px">Tài khoản quản trị không xóa được. "Chưa lưu": tài khoản tạo trước khi hệ thống lưu mật khẩu; mật khẩu hiện ra sau lần đăng nhập kế tiếp hoặc khi bấm Đặt lại.</p></section>
+<section class="panel"><h2>Tài khoản đã xóa</h2><div class="scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Xóa lúc</th><th>Còn lại</th><th></th></tr></thead><tbody>
+{% for a in removed %}<tr><td>{{ a.name }}</td><td class="mono">{{ a.email }}</td><td class="mono">{{ a.role }}</td><td class="mono">{{ a.deleted }}</td>
+  {% if a.minutes_left > 0 %}<td class="mono">{{ a.minutes_left }} phút</td><td><form method="post" action="{{ url_for('admin_account_restore') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn sm" type="submit">Khôi phục</button></form></td>
+  {% else %}<td colspan="2" class="muted small">Hết hạn, chờ phiên sạc kết thúc để xóa vĩnh viễn.</td>{% endif %}</tr>{% else %}<tr><td colspan="6" class="muted">Không có.</td></tr>{% endfor %}
+</tbody></table></div></section>
+</div>
 <aside class="panel"><h2>Tạo tài khoản mới</h2>
 <form method="post" action="{{ url_for('admin_accounts') }}"><input type="hidden" name="csrf" value="{{ csrf }}">
   <div class="field"><label for="n">Họ tên</label><input id="n" name="name" required maxlength="100"></div>
@@ -47,7 +79,7 @@
   <div class="field"><label for="pw">Mật khẩu (tối thiểu 8 ký tự)</label><input id="pw" name="password" type="password" required minlength="8" autocomplete="new-password"></div>
   <div class="field"><label for="pw2">Nhập lại mật khẩu</label><input id="pw2" name="password2" type="password" required minlength="8" autocomplete="new-password"></div>
   <button class="btn" type="submit" style="width:100%">Tạo tài khoản</button>
-  <p class="muted small">Bạn tự đặt mật khẩu và gửi cho người dùng. Hệ thống chỉ lưu bản băm, không hiển thị lại.</p></form></aside>
+  <p class="muted small">Bạn tự đặt mật khẩu và gửi cho người dùng. Mật khẩu hiện trong danh sách tài khoản.</p></form></aside>
 </div>
 {% else %}
 <section class="panel"><h2>Giao dịch gần nhất</h2><div class="scroll"><table><thead><tr><th>Thời điểm</th><th>Khách</th><th>Xe</th><th>Khung</th><th class="r">Điện năng</th><th class="r">Quá giờ</th><th class="r">Tổng</th><th>Trạng thái</th></tr></thead><tbody>
