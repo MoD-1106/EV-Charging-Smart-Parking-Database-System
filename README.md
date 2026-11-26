@@ -21,7 +21,10 @@ Cơ sở dữ liệu quan hệ trên **PostgreSQL** để quản lý bãi đỗ 
 | Phạm Công Đang | N24DCCN102 | n24dccn102@student.ptithcm.edu.vn | Thành viên |
 | Mai Văn Công | N24DCCN100 | n24dccn100@student.ptithcm.edu.vn | Thành viên |
 
-**Lớp:** D24CQCN02-N  **Giảng viên:** Lê Hà Thanh
+**Lớp:** D24CQCN02-N  
+
+**Giảng viên:** Lê Hà Thanh
+
 **Trường:** Học viện Công nghệ Bưu chính Viễn thông (cơ sở TP.HCM)
 
 ## Cấu trúc thư mục
