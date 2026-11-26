@@ -36,13 +36,13 @@ DUPLICATE_MESSAGE = {
 GRACE_MIN = 30  # reservation is released this long after its start (business rule)
 DURATIONS = (30, 60, 90, 120, 180, 240)   # booking lengths offered, in minutes
 MAX_PRICE = 1_000_000                     # VND, sanity limit for tariff input
+MAX_SESSION_KWH = 500
 MAX_LOGIN_FAILS, LOCK_SECONDS = 5, 300
 LOGIN_FAILS = {}   # (address, email) -> (failures, time of last one); per process
 REVOKED = set()    # session ids that were logged out; per process
 MAX_ACTIVE_BOOKINGS, MAX_ADVANCE_DAYS = 3, 30
 _last_expire = 0.0
 CONSTRAINT_MESSAGE = {
-    "ck_payment_confirmed_by_manager": "Chỉ quản lý đang phụ trách bãi này mới xác nhận được thanh toán.",
     "ux_service_session_open_vehicle": "Xe này đang sạc ở một trụ khác.",
     "ux_service_session_open_equipment": "Trụ này đang có xe sạc.",
     "ex_reservation_vehicle_no_overlap": "Xe này đã có lịch đặt chồng khung giờ.",
@@ -50,9 +50,6 @@ CONSTRAINT_MESSAGE = {
     "ck_session_late_arrival": "Lượt đặt đã trễ quá 30 phút nên không dùng được nữa.",
     "ck_session_energy_battery": "Số kWh lớn hơn dung lượng pin của xe (cho phép hao hụt 10%).",
     "ck_session_energy_power": "Số kWh vượt quá công suất trụ nhân thời gian đã sạc.",
-    "ck_account_admin": "Không được xóa tài khoản quản trị.",
-    "ck_account_restore_expired": "Đã quá thời hạn 30 phút.",
-    "ck_account_purged": "Tài khoản đã bị xóa vĩnh viễn.",
     "ck_user_account_email": "Email không hợp lệ.",
     "ck_user_account_name": "Họ tên không được để trống.",
 }
@@ -62,8 +59,8 @@ STATUS_NAME = {"AVAILABLE": "Trống", "RESERVED": "Đã giữ chỗ", "OCCUPIED
                "OUTOFSERVICE": "Ngừng hoạt động"}
 RES_NAME = {"PENDING": "Chờ xác nhận", "CONFIRMED": "Đã xác nhận", "FULFILLED": "Đã sử dụng",
             "CANCELLED": "Đã hủy", "EXPIRED": "Hết hạn"}
-PAY_NAME = {"PENDING": "Chờ thanh toán", "PROCESSING": "Chờ quản lý xác nhận",
-            "SUCCESS": "Đã thanh toán", "FAILED": "Thất bại", "REFUNDED": "Hoàn tiền"}
+PAY_NAME = {"PENDING": "Chờ thanh toán", "SUCCESS": "Đã thanh toán", "FAILED": "Thất bại",
+            "REFUNDED": "Hoàn tiền"}
 METHODS = {"E_WALLET": "Ví điện tử", "CREDIT_CARD": "Thẻ", "BANK_TRANSFER": "Chuyển khoản"}
 
 
@@ -78,7 +75,7 @@ def inject():
     if "csrf" not in session:
         session["csrf"] = secrets.token_urlsafe(16)
     return dict(csrf=session["csrf"], BAND_NAME=BAND_NAME, STATUS_NAME=STATUS_NAME,
-                RES_NAME=RES_NAME, PAY_NAME=PAY_NAME, SEG_NAME=SEG_NAME, METHODS=METHODS, tz=TZ, GRACE_MIN=GRACE_MIN,
+                RES_NAME=RES_NAME, PAY_NAME=PAY_NAME, METHODS=METHODS, tz=TZ, GRACE_MIN=GRACE_MIN,
                 user=session.get("name"), role=session.get("role"))
 
 
@@ -102,7 +99,6 @@ def expire_overdue():
         return
     _last_expire = now
     release_overdue()
-    purge_deleted()
 
 
 @app.errorhandler(psycopg.Error)
@@ -138,14 +134,6 @@ def release_overdue():
         db.row("SELECT fn_expire_overdue_reservations()")
     except psycopg.Error:
         app.logger.warning("could not expire overdue reservations", exc_info=True)
-
-
-def purge_deleted():
-    """Accounts removed more than 30 minutes ago are deleted for good (no pg_cron here)."""
-    try:
-        db.row("SELECT fn_purge_deleted_accounts()")
-    except psycopg.Error:
-        app.logger.warning("could not purge removed accounts", exc_info=True)
 
 
 def role_required(*roles):
@@ -258,8 +246,7 @@ def login():
             return render_template("login.html")
         found = db.row(
             """SELECT account_identifier::text AS id, full_name_text AS name,
-                      role_code AS role, password_hash_text AS hash,
-                      password_plain_text AS plain
+                      role_code AS role, password_hash_text AS hash
                FROM user_account
                WHERE lower(email_address) = lower(%s) AND deleted_datetime IS NULL""",
             (request.form.get("email", "").strip(),))
@@ -271,10 +258,6 @@ def login():
                 ok = False
         if ok:
             LOGIN_FAILS.pop(key, None)
-            if not found.get("plain"):   # account created before passwords were kept
-                db.run("UPDATE user_account SET password_plain_text = %s "
-                       "WHERE account_identifier = %s::uuid AND password_plain_text IS NULL",
-                       (request.form.get("password", ""), found["id"]))
             session.clear()
             session.update(uid=found["id"], name=found["name"], role=found["role"],
                            sid=secrets.token_urlsafe(16))
@@ -282,21 +265,6 @@ def login():
         LOGIN_FAILS[key] = (fails + 1, time.monotonic())
         flash("Email hoặc mật khẩu không đúng.", "err")
     return render_template("login.html")
-
-
-def clean_vehicle(plate, battery):
-    """Return (error_message, plate, battery_text) for a new vehicle."""
-    plate = (plate or "").strip().upper()
-    battery = (battery or "").strip().replace(",", ".")
-    if not 1 <= len(plate) <= 20:
-        return "Biển số xe phải từ 1 đến 20 ký tự.", plate, battery
-    try:
-        value = float(battery)
-    except ValueError:
-        return "Dung lượng pin phải là số (kWh).", plate, battery
-    if not (math.isfinite(value) and 0 < value <= 500):
-        return "Dung lượng pin phải lớn hơn 0 và không quá 500 kWh.", plate, battery
-    return None, plate, f"{value:.2f}"
 
 
 def validate_registration(f, password, confirm):
@@ -314,14 +282,19 @@ def validate_registration(f, password, confirm):
         return "Email không hợp lệ.", v
     if not PHONE_RE.match(v["phone"]):
         return "Số điện thoại gồm 8 đến 14 chữ số, có thể bắt đầu bằng +.", v
-    problem, _, battery = clean_vehicle(v["plate"], v["battery"])
-    if problem:
-        return problem, v
+    if not 1 <= len(v["plate"]) <= 20:
+        return "Biển số xe phải từ 1 đến 20 ký tự.", v
+    try:
+        battery = float(v["battery"])
+    except ValueError:
+        return "Dung lượng pin phải là số (kWh).", v
+    if not 0 < battery <= 500:
+        return "Dung lượng pin phải lớn hơn 0 và không quá 500 kWh.", v
     if len(password) < MIN_PASSWORD:
         return f"Mật khẩu phải có ít nhất {MIN_PASSWORD} ký tự.", v
     if password != confirm:
         return "Hai mật khẩu không khớp.", v
-    v["battery"] = battery
+    v["battery"] = f"{battery:.2f}"
     return None, v
 
 
@@ -342,15 +315,14 @@ def register():
                 db.run(
                     """WITH new_user AS (
                            INSERT INTO user_account (full_name_text, contact_phone_number,
-                                                     email_address, password_hash_text,
-                                                     password_plain_text, role_code)
-                           VALUES (%s, %s, %s, %s, %s, 'CUSTOMER')
+                                                     email_address, password_hash_text, role_code)
+                           VALUES (%s, %s, %s, %s, 'CUSTOMER')
                            RETURNING account_identifier)
                        INSERT INTO vehicle (account_identifier, license_plate_text,
                                             battery_capacity_kwh)
                        SELECT account_identifier, %s, %s::numeric FROM new_user""",
                     (values["name"], values["phone"], values["email"],
-                     generate_password_hash(request.form["password"]), request.form["password"],
+                     generate_password_hash(request.form["password"]),
                      values["plate"], values["battery"]))
                 flash("Đăng ký thành công. Hãy đăng nhập để đặt chỗ.", "ok")
                 return redirect(url_for("login"))
@@ -441,7 +413,7 @@ def customer():
            JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
            JOIN tariff_rate AS t ON t.rate_identifier = p.rate_identifier
            WHERE v.account_identifier = %s::uuid
-           ORDER BY (p.transaction_status_code IN ('PENDING', 'FAILED', 'PROCESSING')) DESC,
+           ORDER BY (p.transaction_status_code IN ('PENDING', 'FAILED')) DESC,
                     ss.start_datetime DESC LIMIT 20""", (TZ, uid))
     sessions = db.rows(
         """SELECT v.license_plate_text AS plate, s.space_code AS code,
@@ -449,7 +421,6 @@ def customer():
                   v.battery_capacity_kwh::float AS cap, t.time_band_code AS band,
                   coalesce(ss.applied_price_per_kwh_value, t.price_per_kwh_value)::float AS price,
                   (extract(epoch FROM ss.start_datetime) * 1000)::bigint AS start_ms,
-                  coalesce(ss.start_battery_percent, 20)::float AS pct,
                   to_char(ss.start_datetime AT TIME ZONE %s, 'HH24:MI') AS since
            FROM service_session AS ss
            JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
@@ -469,24 +440,6 @@ def customer():
                            durations=DURATIONS)
 
 
-@app.post("/customer/vehicle")
-@role_required("CUSTOMER")
-def customer_vehicle():
-    """Add another vehicle to the signed-in customer's account."""
-    problem, plate, battery = clean_vehicle(request.form.get("plate"), request.form.get("battery"))
-    if problem:
-        flash(problem, "err")
-        return redirect(url_for("customer"))
-    try:
-        db.run("""INSERT INTO vehicle (account_identifier, license_plate_text, battery_capacity_kwh)
-                  VALUES (%s::uuid, %s, %s::numeric)""", (session["uid"], plate, battery))
-        flash(f"Đã thêm xe {plate}.", "ok")
-    except psycopg.Error as err:
-        constraint = getattr(getattr(err, "diag", None), "constraint_name", None)
-        flash(DUPLICATE_MESSAGE.get(constraint) or db_message(err), "err")
-    return redirect(url_for("customer"))
-
-
 def booking_problem(uid, begin):
     """Why this customer may not book right now, or None."""
     latest = datetime.now(LOCAL_OFFSET) + timedelta(days=MAX_ADVANCE_DAYS)
@@ -502,17 +455,10 @@ def booking_problem(uid, begin):
                      JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
                      JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
                     WHERE v.account_identifier = %s::uuid
-                      AND p.transaction_status_code IN ('PENDING', 'FAILED')) AS unpaid,
-                  (SELECT count(*) FROM payment_transaction AS p
-                     JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-                     JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
-                    WHERE v.account_identifier = %s::uuid
-                      AND p.transaction_status_code = 'PROCESSING') AS waiting""",
-        (uid, uid, uid)) or {}
+                      AND p.transaction_status_code IN ('PENDING', 'FAILED')) AS unpaid""",
+        (uid, uid)) or {}
     if found.get("unpaid"):
         return "Bạn còn hóa đơn chưa thanh toán. Hãy thanh toán rồi đặt chỗ."
-    if found.get("waiting"):
-        return "Hóa đơn của bạn đang chờ quản lý xác nhận. Đặt chỗ được sau khi quản lý xác nhận."
     if found.get("active", 0) >= MAX_ACTIVE_BOOKINGS:
         return f"Mỗi khách giữ tối đa {MAX_ACTIVE_BOOKINGS} lượt đặt cùng lúc."
     return None
@@ -574,20 +520,19 @@ def customer_pay():
     method = request.form.get("method")
     if method not in METHODS:
         abort(400)
-    # Demo gateway: the payment is recorded, then the facility manager confirms it.
+    # Demo gateway: a real integration would confirm with the payment provider first.
     count = db.run(
         """UPDATE payment_transaction AS p
            SET payment_method_code = %s,
                gateway_reference_identifier = 'DEMO-' || upper(substr(md5(random()::text), 1, 10)),
-               transaction_status_code = 'PROCESSING'
+               transaction_status_code = 'SUCCESS'
            WHERE p.transaction_identifier = %s::uuid AND p.transaction_status_code IN ('PENDING', 'FAILED')
              AND p.session_identifier IN (
                  SELECT ss.session_identifier FROM service_session AS ss
                  JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
                  WHERE v.account_identifier = %s::uuid)""",
         (method, request.form["id"], session["uid"]))
-    flash("Đã gửi thanh toán (cổng mô phỏng), chờ quản lý xác nhận. "
-          "Sau khi quản lý xác nhận bạn mới đặt chỗ tiếp được." if count else
+    flash("Thanh toán thành công (cổng thanh toán mô phỏng)." if count else
           "Không thanh toán được.", "ok" if count else "err")
     return redirect(url_for("customer"))
 
@@ -600,294 +545,6 @@ def managed_facilities():
            JOIN parking_facility AS f ON f.facility_identifier = fm.facility_identifier
            WHERE fm.manager_identifier = %s::uuid ORDER BY f.facility_name_text""",
         (session["uid"],))
-
-
-# ------------------------------------------------ lịch đặt, thanh thời gian, đối soát
-ANOMALY_NAME = {
-    "OVERDUE": "Quá giờ nhận chỗ nhưng lượt đặt chưa được nhả",
-    "OCCUPIED_NO_SESSION": "Ô đang sử dụng nhưng không có phiên sạc",
-    "SESSION_NOT_OCCUPIED": "Có phiên sạc nhưng ô không ở trạng thái đang sử dụng",
-    "RESERVED_NO_BOOKING": "Ô đang giữ chỗ nhưng không có lượt đặt hiệu lực",
-    "LONG_SESSION": "Phiên sạc mở quá 12 giờ",
-    "NO_INVOICE": "Phiên đã kết thúc nhưng chưa có hóa đơn",
-    "FULFILLED_NO_SESSION": "Lượt đặt sạc đã dùng nhưng không có phiên sạc",
-    "WAITING_PAYMENT": "Thanh toán chờ quản lý xác nhận",
-}
-SEG_NAME = {"free": "Trống", "booked": "Đã đặt", "busy": "Đang sử dụng"}
-# chung cho mọi truy vấn theo ngày: d0 = 0h ngày được chọn theo giờ Việt Nam
-DAY_CTE = "WITH d AS (SELECT (%s::date)::timestamp AT TIME ZONE %s AS d0)\n"
-
-
-def pick_day(text):
-    """The day asked for (YYYY-MM-DD), or today in Vietnam time."""
-    try:
-        return datetime.strptime(text or "", "%Y-%m-%d").date()
-    except ValueError:
-        return datetime.now(LOCAL_OFFSET).date()
-
-
-def now_left(day):
-    """Position (%) of the current time on the 0h-24h bar, or None for another day."""
-    now = datetime.now(LOCAL_OFFSET)
-    if now.date() != day:
-        return None
-    return round((now.hour * 3600 + now.minute * 60 + now.second) / 864, 2)
-
-
-def timeline_rows(day, fac_id=None):
-    """Per space, the coloured segments of one day: booked (PENDING/CONFIRMED),
-    busy (charging session, or parking-only booking the driver has arrived for)."""
-    return db.rows(
-        "-- timeline\n" + DAY_CTE + """,
-        segs AS (
-            SELECT r.space_identifier AS sid, r.start_datetime AS s, r.end_datetime AS e,
-                   CASE WHEN r.reservation_status_code = 'FULFILLED' THEN 'busy' ELSE 'booked' END AS kind,
-                   v.license_plate_text || ' · ' || u.full_name_text AS who
-            FROM reservation AS r
-            JOIN vehicle AS v ON v.vehicle_identifier = r.vehicle_identifier
-            JOIN user_account AS u ON u.account_identifier = v.account_identifier
-            CROSS JOIN d
-            WHERE r.deleted_datetime IS NULL
-              AND r.start_datetime < d.d0 + INTERVAL '1 day' AND r.end_datetime > d.d0
-              AND (r.reservation_status_code IN ('PENDING', 'CONFIRMED')
-                   OR (r.reservation_status_code = 'FULFILLED'
-                       AND NOT EXISTS (SELECT 1 FROM charging_equipment AS c
-                                        WHERE c.space_identifier = r.space_identifier
-                                          AND c.deleted_datetime IS NULL)))
-            UNION ALL
-            SELECT ce.space_identifier, ss.start_datetime, coalesce(ss.end_datetime, now()), 'busy',
-                   v.license_plate_text || ' · ' || u.full_name_text
-            FROM service_session AS ss
-            JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-            JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
-            JOIN user_account AS u ON u.account_identifier = v.account_identifier
-            CROSS JOIN d
-            WHERE ss.start_datetime < d.d0 + INTERVAL '1 day'
-              AND coalesce(ss.end_datetime, now()) > d.d0
-        )
-        SELECT f.facility_name_text AS facility, ps.space_code AS code,
-               coalesce(json_agg(json_build_object(
-                   'kind', g.kind,
-                   'left', round((extract(epoch FROM greatest(g.s, d.d0) - d.d0) / 864)::numeric, 2),
-                   'width', greatest(round((extract(epoch FROM least(g.e, d.d0 + INTERVAL '1 day')
-                                                     - greatest(g.s, d.d0)) / 864)::numeric, 2), 0.4),
-                   'label', to_char(g.s AT TIME ZONE %s, 'DD/MM HH24:MI') || '–'
-                            || to_char(g.e AT TIME ZONE %s, 'HH24:MI') || ' · ' || g.who)
-                   ORDER BY g.s) FILTER (WHERE g.sid IS NOT NULL), '[]'::json) AS segs
-        FROM parking_space AS ps
-        JOIN parking_facility AS f ON f.facility_identifier = ps.facility_identifier
-        CROSS JOIN d
-        LEFT JOIN segs AS g ON g.sid = ps.space_identifier
-        WHERE ps.deleted_datetime IS NULL
-          AND (%s::uuid IS NULL OR ps.facility_identifier = %s::uuid)
-        GROUP BY f.facility_name_text, ps.space_code
-        ORDER BY f.facility_name_text, ps.space_code""",
-        (day.isoformat(), TZ, TZ, TZ, fac_id, fac_id))
-
-
-def booking_rows(day, fac_id=None, status=None):
-    """Bookings of one day with the vehicle, the customer, and the session and invoice
-    they led to."""
-    return db.rows(
-        "-- booking_list\n" + DAY_CTE + """
-        SELECT r.reservation_identifier::text AS id, f.facility_name_text AS facility,
-               ps.space_code AS code,
-               to_char(r.start_datetime AT TIME ZONE %s, 'HH24:MI') AS start_text,
-               to_char(r.end_datetime AT TIME ZONE %s, 'HH24:MI') AS end_text,
-               v.license_plate_text AS plate, v.battery_capacity_kwh::float AS battery,
-               u.full_name_text AS customer, u.contact_phone_number AS phone,
-               u.email_address AS email, r.reservation_status_code AS status,
-               CASE WHEN ss.session_identifier IS NOT NULL THEN
-                    to_char(ss.start_datetime AT TIME ZONE %s, 'HH24:MI') || '–'
-                    || coalesce(to_char(ss.end_datetime AT TIME ZONE %s, 'HH24:MI'), 'đang sạc')
-               END AS session_text,
-               ss.consumed_energy_kwh::float AS kwh,
-               p.transaction_amount_value::float AS invoice_total,
-               p.transaction_status_code AS invoice_status
-        FROM reservation AS r
-        CROSS JOIN d
-        JOIN parking_space AS ps ON ps.space_identifier = r.space_identifier
-        JOIN parking_facility AS f ON f.facility_identifier = ps.facility_identifier
-        JOIN vehicle AS v ON v.vehicle_identifier = r.vehicle_identifier
-        JOIN user_account AS u ON u.account_identifier = v.account_identifier
-        LEFT JOIN service_session AS ss ON ss.reservation_identifier = r.reservation_identifier
-        LEFT JOIN payment_transaction AS p ON p.session_identifier = ss.session_identifier
-        WHERE r.deleted_datetime IS NULL
-          AND r.start_datetime < d.d0 + INTERVAL '1 day' AND r.end_datetime > d.d0
-          AND (%s::uuid IS NULL OR ps.facility_identifier = %s::uuid)
-          AND (%s::text IS NULL OR r.reservation_status_code = %s::text)
-        ORDER BY r.start_datetime, f.facility_name_text, ps.space_code
-        LIMIT 500""",
-        (day.isoformat(), TZ, TZ, TZ, TZ, TZ, fac_id, fac_id, status, status))
-
-
-def reconcile_context(args):
-    """Everything the admin reconciliation view shows, from the query-string filters."""
-    day = pick_day(args.get("day"))
-    facilities = db.rows("SELECT facility_identifier::text AS id, facility_name_text AS name "
-                         "FROM parking_facility ORDER BY facility_name_text")
-    fac_id = args.get("fac") if args.get("fac") in [f["id"] for f in facilities] else None
-    status = args.get("status") if args.get("status") in RES_NAME else None
-    summary = db.rows(SUMMARY_SQL, (day.isoformat(), TZ))
-    anomalies = db.rows(ANOMALY_SQL, (TZ, TZ, TZ))
-    return dict(day=day, now_left=now_left(day), facilities=facilities, fac_id=fac_id,
-                status=status, summary=summary, anomalies=anomalies, ANOMALY_NAME=ANOMALY_NAME,
-                timeline=timeline_rows(day, fac_id),
-                bookings=booking_rows(day, fac_id, status))
-
-
-SUMMARY_SQL = "-- reconcile_summary\n" + DAY_CTE + """
-SELECT f.facility_name_text AS facility,
-       (SELECT count(*) FROM parking_space AS s2
-         WHERE s2.facility_identifier = f.facility_identifier AND s2.deleted_datetime IS NULL) AS spaces,
-       (SELECT count(*) FROM parking_space AS s2
-         WHERE s2.facility_identifier = f.facility_identifier AND s2.deleted_datetime IS NULL
-           AND s2.availability_status_code = 'OCCUPIED') AS occupied,
-       (SELECT count(*) FROM parking_space AS s2
-         WHERE s2.facility_identifier = f.facility_identifier AND s2.deleted_datetime IS NULL
-           AND s2.availability_status_code = 'RESERVED') AS reserved,
-       count(DISTINCT r.reservation_identifier) AS bookings,
-               count(DISTINCT r.reservation_identifier)
-                   FILTER (WHERE r.reservation_status_code = 'PENDING') AS pending,
-               count(DISTINCT r.reservation_identifier)
-                   FILTER (WHERE r.reservation_status_code = 'CONFIRMED') AS confirmed,
-               count(DISTINCT r.reservation_identifier)
-                   FILTER (WHERE r.reservation_status_code = 'FULFILLED') AS fulfilled,
-               count(DISTINCT r.reservation_identifier)
-                   FILTER (WHERE r.reservation_status_code = 'CANCELLED') AS cancelled,
-               count(DISTINCT r.reservation_identifier)
-                   FILTER (WHERE r.reservation_status_code = 'EXPIRED') AS expired,
-       (SELECT count(*) FROM service_session AS ss
-          JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-          JOIN parking_space AS s2 ON s2.space_identifier = ce.space_identifier
-         WHERE s2.facility_identifier = f.facility_identifier
-           AND ss.start_datetime >= d.d0 AND ss.start_datetime < d.d0 + INTERVAL '1 day') AS sessions,
-       (SELECT count(*) FROM payment_transaction AS p
-          JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-          JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-          JOIN parking_space AS s2 ON s2.space_identifier = ce.space_identifier
-         WHERE s2.facility_identifier = f.facility_identifier
-           AND p.transaction_status_code = 'PROCESSING') AS waiting,
-       (SELECT coalesce(sum(p.transaction_amount_value), 0)::float FROM payment_transaction AS p
-          JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-          JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-          JOIN parking_space AS s2 ON s2.space_identifier = ce.space_identifier
-         WHERE s2.facility_identifier = f.facility_identifier
-           AND p.transaction_status_code = 'SUCCESS'
-           AND ss.end_datetime >= d.d0 AND ss.end_datetime < d.d0 + INTERVAL '1 day') AS revenue
-FROM parking_facility AS f
-CROSS JOIN d
-LEFT JOIN parking_space AS ps ON ps.facility_identifier = f.facility_identifier
-LEFT JOIN reservation AS r ON r.space_identifier = ps.space_identifier AND r.deleted_datetime IS NULL
-      AND r.start_datetime >= d.d0 AND r.start_datetime < d.d0 + INTERVAL '1 day'
-GROUP BY f.facility_identifier, f.facility_name_text, d.d0
-ORDER BY f.facility_name_text"""
-
-
-ANOMALY_SQL = """-- anomalies
-SELECT kind, facility, code, detail FROM (
-    SELECT 'OVERDUE' AS kind, f.facility_name_text AS facility, ps.space_code AS code,
-           v.license_plate_text || ' · ' || to_char(r.start_datetime AT TIME ZONE %s, 'DD/MM HH24:MI')
-               || ' · ' || r.reservation_status_code AS detail, 1 AS ord
-    FROM reservation AS r
-    JOIN parking_space AS ps ON ps.space_identifier = r.space_identifier
-    JOIN parking_facility AS f ON f.facility_identifier = ps.facility_identifier
-    JOIN vehicle AS v ON v.vehicle_identifier = r.vehicle_identifier
-    WHERE r.deleted_datetime IS NULL AND r.reservation_status_code IN ('PENDING', 'CONFIRMED')
-      AND now() > r.start_datetime + INTERVAL '30 minutes'
-      AND NOT EXISTS (SELECT 1 FROM service_session AS ss
-                      WHERE ss.reservation_identifier = r.reservation_identifier)
-    UNION ALL
-    SELECT 'OCCUPIED_NO_SESSION', f.facility_name_text, ps.space_code, '', 2
-    FROM parking_space AS ps JOIN parking_facility AS f USING (facility_identifier)
-    WHERE ps.deleted_datetime IS NULL AND ps.availability_status_code = 'OCCUPIED'
-      AND NOT EXISTS (SELECT 1 FROM service_session AS ss
-                      JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-                      WHERE ce.space_identifier = ps.space_identifier AND ss.end_datetime IS NULL)
-    UNION ALL
-    SELECT 'SESSION_NOT_OCCUPIED', f.facility_name_text, ps.space_code,
-           v.license_plate_text || ' · ' || ps.availability_status_code, 3
-    FROM service_session AS ss
-    JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-    JOIN parking_space AS ps ON ps.space_identifier = ce.space_identifier
-    JOIN parking_facility AS f ON f.facility_identifier = ps.facility_identifier
-    JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
-    WHERE ss.end_datetime IS NULL AND ps.availability_status_code <> 'OCCUPIED'
-    UNION ALL
-    SELECT 'RESERVED_NO_BOOKING', f.facility_name_text, ps.space_code, '', 4
-    FROM parking_space AS ps JOIN parking_facility AS f USING (facility_identifier)
-    WHERE ps.deleted_datetime IS NULL AND ps.availability_status_code = 'RESERVED'
-      AND NOT EXISTS (SELECT 1 FROM reservation AS r
-                      WHERE r.space_identifier = ps.space_identifier AND r.deleted_datetime IS NULL
-                        AND r.reservation_status_code IN ('CONFIRMED', 'FULFILLED')
-                        AND now() >= r.start_datetime - INTERVAL '15 minutes'
-                        AND now() < r.end_datetime)
-    UNION ALL
-    SELECT 'LONG_SESSION', f.facility_name_text, ps.space_code,
-           v.license_plate_text || ' · từ ' || to_char(ss.start_datetime AT TIME ZONE %s, 'DD/MM HH24:MI'), 5
-    FROM service_session AS ss
-    JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-    JOIN parking_space AS ps ON ps.space_identifier = ce.space_identifier
-    JOIN parking_facility AS f ON f.facility_identifier = ps.facility_identifier
-    JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
-    WHERE ss.end_datetime IS NULL AND ss.start_datetime < now() - INTERVAL '12 hours'
-    UNION ALL
-    SELECT 'NO_INVOICE', f.facility_name_text, ps.space_code, v.license_plate_text, 6
-    FROM service_session AS ss
-    JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-    JOIN parking_space AS ps ON ps.space_identifier = ce.space_identifier
-    JOIN parking_facility AS f ON f.facility_identifier = ps.facility_identifier
-    JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
-    WHERE ss.end_datetime IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM payment_transaction AS p
-                      WHERE p.session_identifier = ss.session_identifier)
-    UNION ALL
-    SELECT 'FULFILLED_NO_SESSION', f.facility_name_text, ps.space_code,
-           v.license_plate_text || ' · ' || to_char(r.start_datetime AT TIME ZONE %s, 'DD/MM HH24:MI'), 7
-    FROM reservation AS r
-    JOIN parking_space AS ps ON ps.space_identifier = r.space_identifier
-    JOIN parking_facility AS f ON f.facility_identifier = ps.facility_identifier
-    JOIN vehicle AS v ON v.vehicle_identifier = r.vehicle_identifier
-    WHERE r.deleted_datetime IS NULL AND r.reservation_status_code = 'FULFILLED'
-      AND EXISTS (SELECT 1 FROM charging_equipment AS c
-                  WHERE c.space_identifier = r.space_identifier AND c.deleted_datetime IS NULL)
-      AND NOT EXISTS (SELECT 1 FROM service_session AS ss
-                      WHERE ss.reservation_identifier = r.reservation_identifier)
-    UNION ALL
-    SELECT 'WAITING_PAYMENT', f.facility_name_text, ps.space_code,
-           p.license_plate_text || ' · ' || p.customer_name_text || ' · '
-               || to_char(p.transaction_amount_value, 'FM999G999G999') || 'đ', 8
-    FROM payment_transaction AS p
-    JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-    JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-    JOIN parking_space AS ps ON ps.space_identifier = ce.space_identifier
-    JOIN parking_facility AS f ON f.facility_identifier = ps.facility_identifier
-    WHERE p.transaction_status_code = 'PROCESSING'
-) AS x ORDER BY ord, facility, code"""
-
-
-@app.get("/admin/reconcile")
-@role_required("ADMIN")
-def admin_reconcile():
-    """Reconciliation part of the admin page, polled every 15 s by live.js."""
-    return render_template("_reconcile.html", **reconcile_context(request.args))
-
-
-def manager_schedule_context(fac_id, day_text):
-    """fac_id must already be one of the manager's facilities (checked by the caller)."""
-    day = pick_day(day_text)
-    return dict(day=day, now_left=now_left(day), fac_id=fac_id,
-                timeline=timeline_rows(day, fac_id), bookings=booking_rows(day, fac_id))
-
-
-@app.get("/manager/schedule")
-@role_required("MANAGER")
-def manager_schedule():
-    """Bookings and timeline of one facility and day (polled by live.js)."""
-    fac_id = request.args.get("fac")
-    if fac_id not in [f["id"] for f in managed_facilities()]:
-        abort(404)
-    return render_template("_schedule.html", **manager_schedule_context(fac_id, request.args.get("day")))
 
 
 @app.route("/manager")
@@ -903,9 +560,7 @@ def manager():
                       ce.equipment_identifier::text AS eq_id, ce.connector_type_code AS conn,
                       ce.max_power_kw::float AS kw, ce.equipment_status_code AS eq_status,
                       ce.evse_identifier AS evse, v.license_plate_text AS plate,
-                      est.energy_kwh::float AS kwh, est.battery_percent::float AS pct_now,
-                      to_char(est.full_at AT TIME ZONE %s, 'HH24:MI') AS full_text,
-                      to_char(fin.full_at AT TIME ZONE %s, 'HH24:MI') AS eta_text,
+                      ss.consumed_energy_kwh::float AS kwh,
                       ss.session_identifier::text AS session_id,
                       (SELECT dv.license_plate_text
                          FROM reservation AS r
@@ -934,13 +589,8 @@ def manager():
                LEFT JOIN service_session AS ss
                       ON ss.equipment_identifier = ce.equipment_identifier AND ss.end_datetime IS NULL
                LEFT JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
-               LEFT JOIN LATERAL fn_session_estimate(ss.session_identifier, now()) AS est
-                      ON ss.session_identifier IS NOT NULL
-               LEFT JOIN LATERAL fn_session_estimate(ss.session_identifier,
-                                                     ss.start_datetime + INTERVAL '7 days') AS fin
-                      ON ss.session_identifier IS NOT NULL
                WHERE s.facility_identifier = %s::uuid AND s.deleted_datetime IS NULL
-               ORDER BY s.space_code""", (TZ, TZ, TZ, TZ, fac_id))
+               ORDER BY s.space_code""", (TZ, TZ, fac_id))
         for sp in spaces:
             counts[sp["status"]] = counts.get(sp["status"], 0) + 1
         alerts = db.rows(
@@ -982,81 +632,9 @@ def manager():
                                   WHERE ce.space_identifier = r.space_identifier
                                     AND ce.deleted_datetime IS NULL)
                ORDER BY r.start_datetime""", (TZ, fac_id))
-    plates = db.rows(
-        """SELECT v.license_plate_text AS plate, u.full_name_text AS owner
-           FROM vehicle AS v
-           JOIN user_account AS u ON u.account_identifier = v.account_identifier
-           WHERE v.deleted_datetime IS NULL AND u.deleted_datetime IS NULL
-             AND NOT EXISTS (SELECT 1 FROM service_session AS ss
-                              WHERE ss.vehicle_identifier = v.vehicle_identifier
-                                AND ss.end_datetime IS NULL)
-           ORDER BY v.license_plate_text""") if fac_id else []
-    payments = db.rows(
-        """SELECT p.transaction_identifier::text AS id, s.space_code AS code,
-                  p.license_plate_text AS plate, p.customer_name_text AS customer,
-                  p.transaction_amount_value::float AS total, p.payment_method_code AS method,
-                  p.gateway_reference_identifier AS ref,
-                  to_char(p.created_datetime AT TIME ZONE %s, 'DD/MM HH24:MI') AS paid_text
-           FROM payment_transaction AS p
-           JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-           JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-           JOIN parking_space AS s ON s.space_identifier = ce.space_identifier
-           WHERE s.facility_identifier = %s::uuid AND p.transaction_status_code = 'PROCESSING'
-           ORDER BY p.created_datetime""", (TZ, fac_id)) if fac_id else []
-    invoice = invoice_detail(request.args["invoice"]) if request.args.get("invoice") else None
-    schedule = manager_schedule_context(fac_id, request.args.get("day")) if fac_id else {}
-    return render_template("manager.html", facilities=facilities, fac_id=fac_id, **{
-                               k: v for k, v in schedule.items() if k != "fac_id"},
-                           invoice=invoice, payments=payments, spaces=spaces, alerts=alerts, pending=pending,
-                           arrivals=arrivals, counts=counts, plates=plates,
-                           parked=parked_rows(fac_id) if fac_id else [])
-
-
-def parked_rows(fac_id):
-    """Vehicles in the facility right now: open charging sessions, and parking-only
-    bookings whose driver has arrived (FULFILLED) and whose slot has not ended."""
-    return db.rows(
-        """SELECT * FROM (
-             SELECT s.space_code AS code, v.license_plate_text AS plate,
-                    u.full_name_text AS owner, 'CHARGING' AS kind,
-                    to_char(ss.start_datetime AT TIME ZONE %s, 'HH24:MI') AS since,
-                    (extract(epoch FROM ss.start_datetime) * 1000)::bigint AS since_ms,
-                    NULL AS until_text, est.energy_kwh::float AS kwh,
-                    est.battery_percent::float AS pct_now,
-                    to_char(est.full_at AT TIME ZONE %s, 'HH24:MI') AS full_text
-             FROM service_session AS ss
-             JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-             JOIN parking_space AS s ON s.space_identifier = ce.space_identifier
-             JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
-             JOIN user_account AS u ON u.account_identifier = v.account_identifier
-             CROSS JOIN LATERAL fn_session_estimate(ss.session_identifier, now()) AS est
-             WHERE s.facility_identifier = %s::uuid AND ss.end_datetime IS NULL
-             UNION ALL
-             SELECT s.space_code, v.license_plate_text, u.full_name_text, 'PARKING',
-                    to_char(r.start_datetime AT TIME ZONE %s, 'HH24:MI'),
-                    (extract(epoch FROM r.start_datetime) * 1000)::bigint,
-                    to_char(r.end_datetime AT TIME ZONE %s, 'HH24:MI'), NULL, NULL, NULL
-             FROM reservation AS r
-             JOIN parking_space AS s ON s.space_identifier = r.space_identifier
-             JOIN vehicle AS v ON v.vehicle_identifier = r.vehicle_identifier
-             JOIN user_account AS u ON u.account_identifier = v.account_identifier
-             WHERE s.facility_identifier = %s::uuid AND r.deleted_datetime IS NULL
-               AND r.reservation_status_code = 'FULFILLED'
-               AND now() >= r.start_datetime - INTERVAL '15 minutes' AND now() < r.end_datetime
-               AND NOT EXISTS (SELECT 1 FROM charging_equipment AS ce
-                                WHERE ce.space_identifier = r.space_identifier
-                                  AND ce.deleted_datetime IS NULL)
-           ) AS parked ORDER BY code""", (TZ, TZ, fac_id, TZ, TZ, fac_id))
-
-
-@app.get("/manager/parked")
-@role_required("MANAGER")
-def manager_parked():
-    """Table rows for the live list of parked vehicles (polled by live.js)."""
-    fac_id = request.args.get("fac")
-    if fac_id not in [f["id"] for f in managed_facilities()]:
-        abort(404)
-    return render_template("_parked.html", parked=parked_rows(fac_id))
+    return render_template("manager.html", facilities=facilities, fac_id=fac_id,
+                           spaces=spaces, alerts=alerts, pending=pending,
+                           arrivals=arrivals, counts=counts)
 
 
 MANAGED_SPACES = """space_identifier IN (
@@ -1114,53 +692,17 @@ def manager_reservation():
     return redirect(url_for("manager", fac=request.form.get("fac")))
 
 
-@app.post("/manager/payment")
-@role_required("MANAGER")
-def manager_payment():
-    """Confirm (SUCCESS) or reject (FAILED) a payment the customer has made,
-    only for sessions charged at the manager's own facilities."""
-    status = {"confirm": "SUCCESS", "reject": "FAILED"}.get(request.form.get("action"))
-    if not status:
-        abort(400)
-    try:
-        count = db.run(
-            f"""UPDATE payment_transaction SET transaction_status_code = '{status}',
-                       confirmed_by_identifier = %s::uuid
-                WHERE transaction_identifier = %s::uuid AND transaction_status_code = 'PROCESSING'
-                  AND session_identifier IN (
-                      SELECT ss.session_identifier FROM service_session AS ss
-                      JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-                      WHERE ce.""" + MANAGED_SPACES + ")",
-            (session["uid"], request.form.get("id", ""), session["uid"]))
-        if not count:
-            flash("Không tìm thấy thanh toán chờ xác nhận ở bãi bạn phụ trách.", "err")
-        elif status == "SUCCESS":
-            flash("Đã xác nhận thanh toán.", "ok")
-        else:
-            flash("Đã từ chối thanh toán; khách có thể thanh toán lại.", "ok")
-    except psycopg.Error as err:
-        flash(db_message(err), "err")
-    return redirect(url_for("manager", fac=request.form.get("fac")))
-
-
 @app.post("/manager/session/start")
 @role_required("MANAGER")
 def manager_session_start():
     """Plug a vehicle in. A reservation of this vehicle on this space is linked
     automatically; without one it is a walk-in. Triggers enforce the rules."""
     plate = request.form.get("plate", "").strip().upper()
-    try:
-        pct = float(request.form.get("pct", "").strip().replace(",", "."))
-        if not (math.isfinite(pct) and 0 <= pct < 100):
-            raise ValueError("range")
-    except ValueError:
-        flash("Nhập % pin lúc cắm sạc, từ 0 đến 99.", "err")
-        return redirect(url_for("manager", fac=request.form.get("fac")))
     release_overdue()   # an overdue booking must not keep the space
     try:
         count = db.run(
             """INSERT INTO service_session (reservation_identifier, vehicle_identifier,
-                                            equipment_identifier, start_battery_percent)
+                                            equipment_identifier)
                SELECT (SELECT r.reservation_identifier FROM reservation AS r
                         WHERE r.vehicle_identifier = v.vehicle_identifier
                           AND r.space_identifier = ce.space_identifier
@@ -1170,12 +712,12 @@ def manager_session_start():
                           AND now() <= r.start_datetime + INTERVAL '30 minutes'
                           AND now() < r.end_datetime
                         ORDER BY r.start_datetime LIMIT 1),
-                      v.vehicle_identifier, ce.equipment_identifier, %s
+                      v.vehicle_identifier, ce.equipment_identifier
                FROM vehicle AS v
                JOIN charging_equipment AS ce ON ce.equipment_identifier = %s::uuid
                WHERE upper(v.license_plate_text) = %s AND v.deleted_datetime IS NULL
                  AND ce.deleted_datetime IS NULL AND ce.""" + MANAGED_SPACES,
-            (pct, request.form.get("id"), plate, session["uid"]))
+            (request.form.get("id"), plate, session["uid"]))
         flash("Đã bắt đầu phiên sạc." if count else
               "Không bắt đầu được: kiểm tra biển số và trụ phụ trách.",
               "ok" if count else "err")
@@ -1187,66 +729,32 @@ def manager_session_start():
 @app.post("/manager/session/stop")
 @role_required("MANAGER")
 def manager_session_stop():
-    """Unplug. Energy, full-battery time and peak power are computed by
-    fn_session_estimate; the database trigger then issues the invoice."""
+    """Unplug. The database trigger then issues the invoice."""
+    try:
+        kwh = float(request.form["kwh"].strip().replace(",", "."))
+        idle = int(request.form.get("idle") or 0)   # minutes since fully charged
+        if not (math.isfinite(kwh) and 0 <= kwh <= MAX_SESSION_KWH and 0 <= idle <= 1440):
+            raise ValueError("range")
+    except (ValueError, KeyError):
+        flash(f"Số kWh phải từ 0 đến {MAX_SESSION_KWH}, số phút chờ từ 0 đến 1440.", "err")
+        return redirect(url_for("manager", fac=request.form.get("fac")))
     try:
         count = db.run(
             """UPDATE service_session AS ss
-               SET end_datetime = now(),
-                   (consumed_energy_kwh, fully_charged_datetime, peak_charging_power_kw) =
-                   (SELECT e.energy_kwh, e.full_at, e.power_kw
-                    FROM fn_session_estimate(ss.session_identifier, now()) AS e)
+               SET end_datetime = now(), consumed_energy_kwh = %s,
+                   fully_charged_datetime = CASE WHEN %s::int > 0
+                       THEN greatest(ss.start_datetime, now() - make_interval(mins => %s::int))
+                   END
                WHERE ss.session_identifier = %s::uuid AND ss.end_datetime IS NULL
                  AND ss.equipment_identifier IN (
                      SELECT equipment_identifier FROM charging_equipment WHERE """
             + MANAGED_SPACES + ")",
-            (request.form.get("id"), session["uid"]))
-        flash("Đã kết thúc phiên và lập hóa đơn theo điện năng tự tính." if count else
-              "Không kết thúc được phiên.", "ok" if count else "err")
-        if count:
-            bill = db.row("SELECT transaction_identifier::text AS id FROM payment_transaction "
-                          "WHERE session_identifier = %s::uuid", (request.form.get("id"),))
-            if bill:
-                return redirect(url_for("manager", fac=request.form.get("fac"), invoice=bill["id"]))
+            (kwh, idle, idle, request.form.get("id"), session["uid"]))
+        flash("Đã kết thúc phiên và lập hóa đơn." if count else "Không kết thúc được phiên.",
+              "ok" if count else "err")
     except psycopg.Error as err:
         flash(db_message(err), "err")
     return redirect(url_for("manager", fac=request.form.get("fac")))
-
-
-def invoice_detail(invoice_id):
-    """Full invoice of a session at one of the manager's facilities, or None."""
-    return db.row(
-        """SELECT p.transaction_identifier::text AS id, f.facility_name_text AS facility,
-                  s.space_code AS code, ce.evse_identifier AS evse, ce.max_power_kw::float AS kw,
-                  p.customer_name_text AS customer, p.customer_phone_number AS phone,
-                  p.license_plate_text AS plate,
-                  to_char(ss.start_datetime AT TIME ZONE %s, 'DD/MM HH24:MI') AS start_text,
-                  to_char(ss.end_datetime AT TIME ZONE %s, 'DD/MM HH24:MI') AS end_text,
-                  to_char(ss.fully_charged_datetime AT TIME ZONE %s, 'DD/MM HH24:MI') AS full_text,
-                  round(extract(epoch FROM ss.end_datetime - ss.start_datetime) / 60)::int AS minutes,
-                  coalesce(ss.start_battery_percent, 20)::float AS pct_start,
-                  est.battery_percent::float AS pct_end,
-                  ss.consumed_energy_kwh::float AS kwh, t.time_band_code AS band,
-                  ss.applied_price_per_kwh_value::float AS price,
-                  p.energy_amount_value::float AS energy,
-                  CASE WHEN ss.fully_charged_datetime IS NULL THEN 0
-                       ELSE round(extract(epoch FROM ss.end_datetime - ss.fully_charged_datetime)
-                                  / 3600.0, 2) END::float AS overtime_hours,
-                  ss.applied_overtime_fee_per_hour_value::float AS fee,
-                  p.overtime_amount_value::float AS overtime,
-                  p.transaction_amount_value::float AS total,
-                  p.transaction_status_code AS status,
-                  to_char(p.created_datetime AT TIME ZONE %s, 'DD/MM HH24:MI') AS created_text
-           FROM payment_transaction AS p
-           JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-           JOIN tariff_rate AS t ON t.rate_identifier = p.rate_identifier
-           JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-           JOIN parking_space AS s ON s.space_identifier = ce.space_identifier
-           JOIN parking_facility AS f ON f.facility_identifier = s.facility_identifier
-           JOIN facility_manager AS fm ON fm.facility_identifier = s.facility_identifier
-           CROSS JOIN LATERAL fn_session_estimate(ss.session_identifier, ss.end_datetime) AS est
-           WHERE p.transaction_identifier = %s::uuid AND fm.manager_identifier = %s::uuid""",
-        (TZ, TZ, TZ, TZ, invoice_id, session["uid"]))
 
 
 # ---------------------------------------------------------------- admin
@@ -1308,52 +816,27 @@ def admin():
         ctx["managers"] = db.rows(
             """SELECT account_identifier::text AS id, full_name_text AS name FROM user_account
                WHERE role_code = 'MANAGER' AND deleted_datetime IS NULL ORDER BY full_name_text""")
-    elif tab == "bookings":
-        ctx.update(reconcile_context(request.args))
     elif tab == "accounts":
-        purge_deleted()
-        if request.args.get("delete"):
-            ctx["target"] = account_info(request.args["delete"])
-        ctx["removed"] = db.rows(
-            """SELECT account_identifier::text AS id, full_name_text AS name,
-                      email_address AS email, role_code AS role,
-                      to_char(deleted_datetime AT TIME ZONE %s, 'DD/MM HH24:MI') AS deleted,
-                      greatest(0, ceil(30 - extract(epoch FROM now() - deleted_datetime) / 60))::int
-                          AS minutes_left
-               FROM user_account
-               WHERE deleted_datetime IS NOT NULL AND purged_datetime IS NULL
-               ORDER BY deleted_datetime DESC""", (TZ,))
         ctx["accounts"] = db.rows(
-            """SELECT account_identifier::text AS id, full_name_text AS name,
-                      email_address AS email, role_code AS role,
-                      password_plain_text AS password,
+            """SELECT full_name_text AS name, email_address AS email, role_code AS role,
                       to_char(created_datetime AT TIME ZONE %s, 'DD/MM/YYYY') AS created
                FROM user_account WHERE role_code <> 'CUSTOMER' AND deleted_datetime IS NULL
                ORDER BY role_code, full_name_text""", (TZ,))
-        ctx["customers"] = db.rows(
-            """SELECT u.account_identifier::text AS id, u.full_name_text AS name,
-                      u.email_address AS email, u.contact_phone_number AS phone,
-                      u.password_plain_text AS password,
-                      (SELECT string_agg(v.license_plate_text, ', ' ORDER BY v.license_plate_text)
-                         FROM vehicle AS v
-                        WHERE v.account_identifier = u.account_identifier
-                          AND v.deleted_datetime IS NULL) AS plates,
-                      to_char(u.created_datetime AT TIME ZONE %s, 'DD/MM/YYYY') AS created
-               FROM user_account AS u
-               WHERE u.role_code = 'CUSTOMER' AND u.deleted_datetime IS NULL
-               ORDER BY u.full_name_text""", (TZ,))
     else:
         ctx["tab"] = "invoices"
         ctx["invoices"] = db.rows(
             """SELECT p.transaction_identifier::text AS id,
                       to_char(p.created_datetime AT TIME ZONE %s, 'DD/MM HH24:MI') AS day_text,
-                      p.customer_name_text AS customer, p.license_plate_text AS plate,
+                      u.full_name_text AS customer, v.license_plate_text AS plate,
                       t.time_band_code AS band,
                       p.energy_amount_value::float AS energy,
                       p.overtime_amount_value::float AS overtime,
                       p.transaction_amount_value::float AS total,
                       p.transaction_status_code AS status
                FROM payment_transaction AS p
+               JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
+               JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
+               JOIN user_account AS u ON u.account_identifier = v.account_identifier
                JOIN tariff_rate AS t ON t.rate_identifier = p.rate_identifier
                ORDER BY p.created_datetime DESC LIMIT 25""", (TZ,))
     return render_template("admin.html", **ctx)
@@ -1426,93 +909,13 @@ def admin_accounts():
     try:
         db.run(
             """INSERT INTO user_account (full_name_text, contact_phone_number, email_address,
-                                         password_hash_text, password_plain_text, role_code)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (name, phone, email, generate_password_hash(password), password, f["role"]))
+                                         password_hash_text, role_code)
+               VALUES (%s, %s, %s, %s, %s)""",
+            (name, phone, email, generate_password_hash(password), f["role"]))
         flash(f"Đã tạo tài khoản {f['role']} {f['email'].strip()} với mật khẩu do bạn nhập.", "ok")
     except (KeyError, psycopg.Error) as err:
         flash("Không tạo được: " + (db_message(err) if isinstance(err, psycopg.Error)
                                     else "thiếu dữ liệu."), "err")
-    return redirect(url_for("admin", tab="accounts"))
-
-@app.post("/admin/accounts/password")
-@role_required("ADMIN")
-def admin_account_password():
-    """Give an account a new random password and show it to the admin."""
-    password = secrets.token_urlsafe(8)
-    try:
-        count = db.run(
-            """UPDATE user_account SET password_hash_text = %s, password_plain_text = %s
-               WHERE account_identifier = %s::uuid AND deleted_datetime IS NULL""",
-            (generate_password_hash(password), password, request.form.get("id", "")))
-        flash(f"Mật khẩu mới: {password}" if count else "Không tìm thấy tài khoản.",
-              "ok" if count else "err")
-    except psycopg.Error as err:
-        flash(db_message(err), "err")
-    return redirect(url_for("admin", tab="accounts"))
-
-
-def account_info(uid):
-    """A removable (manager or customer) account with what the admin should know first."""
-    return db.row(
-        """SELECT u.account_identifier::text AS id, u.full_name_text AS name,
-                  u.email_address AS email, u.role_code AS role,
-                  (SELECT string_agg(v.license_plate_text, ', ')
-                     FROM service_session AS ss
-                     JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
-                    WHERE v.account_identifier = u.account_identifier
-                      AND ss.end_datetime IS NULL) AS charging,
-                  count(p.transaction_identifier)::int AS unpaid,
-                  coalesce(sum(p.transaction_amount_value), 0)::float AS owed
-           FROM user_account AS u
-           LEFT JOIN (vehicle AS pv
-                      JOIN service_session AS ps ON ps.vehicle_identifier = pv.vehicle_identifier
-                      JOIN payment_transaction AS p
-                        ON p.session_identifier = ps.session_identifier
-                       AND p.transaction_status_code IN ('PENDING', 'FAILED'))
-                  ON pv.account_identifier = u.account_identifier
-           WHERE u.account_identifier = %s::uuid AND u.deleted_datetime IS NULL
-             AND u.role_code IN ('CUSTOMER', 'MANAGER')
-           GROUP BY u.account_identifier""", (uid,))
-
-
-@app.post("/admin/accounts/delete")
-@role_required("ADMIN")
-def admin_account_delete():
-    """Soft delete, restorable for 30 minutes. A customer who is charging or owes
-    money is removed only after the admin has seen the warning (ack=1)."""
-    uid = request.form.get("id", "")
-    try:
-        info = account_info(uid)
-        if info and (info["charging"] or info["unpaid"]) and request.form.get("ack") != "1":
-            return redirect(url_for("admin", tab="accounts", delete=uid))
-        count = info and db.run(
-            """UPDATE user_account SET deleted_datetime = now()
-               WHERE account_identifier = %s::uuid AND deleted_datetime IS NULL
-                 AND role_code IN ('CUSTOMER', 'MANAGER')""", (uid,))
-        flash("Đã xóa tài khoản. Có thể khôi phục trong 30 phút." if count else
-              "Không có tài khoản quản lý hoặc khách hàng nào để xóa.", "ok" if count else "err")
-    except psycopg.Error as err:
-        flash(db_message(err), "err")
-    return redirect(url_for("admin", tab="accounts"))
-
-
-@app.post("/admin/accounts/restore")
-@role_required("ADMIN")
-def admin_account_restore():
-    try:
-        count = db.run(
-            """UPDATE user_account SET deleted_datetime = NULL
-               WHERE account_identifier = %s::uuid AND deleted_datetime IS NOT NULL
-                 AND purged_datetime IS NULL AND role_code IN ('CUSTOMER', 'MANAGER')""",
-            (request.form.get("id", ""),))
-        flash("Đã khôi phục tài khoản." if count else
-              "Không còn khôi phục được tài khoản này.", "ok" if count else "err")
-    except psycopg.Error as err:
-        reason = db_message(err)
-        if getattr(err, "sqlstate", None) == "23505":
-            reason = "email, số điện thoại hoặc biển số đã được tài khoản khác đăng ký."
-        flash("Không khôi phục được: " + reason, "err")
     return redirect(url_for("admin", tab="accounts"))
 
 
