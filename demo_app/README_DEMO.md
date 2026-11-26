@@ -10,6 +10,11 @@ createdb evt
 psql -d evt -v ON_ERROR_STOP=1 -f ../schema.sql
 psql -d evt -v ON_ERROR_STOP=1 -f ../seed.sql
 psql -d evt -v ON_ERROR_STOP=1 -f sql/demo_accounts.sql   # tạo tài khoản admin, quản lý, khách
+psql -d evt -v ON_ERROR_STOP=1 -f sql/demo_data.sql       # vài phiên sạc gần đây cho tài khoản khách demo
+
+# (nên làm) tài khoản CSDL quyền tối thiểu cho web
+psql -d evt -v ON_ERROR_STOP=1 -f ../roles.sql
+psql -d evt -c "ALTER ROLE evc_app PASSWORD 'MAT_KHAU_APP'"   # rồi dùng evc_app trong DATABASE_URL
 
 # 2. Ứng dụng
 python -m venv .venv
@@ -26,9 +31,19 @@ Mở http://127.0.0.1:5000. Email và mật khẩu demo nằm trong `DEMO_ACCOUN
 
 | Vai trò | Trang | Chức năng |
 |---|---|---|
-| CUSTOMER | `/register`, `/customer` | Tự đăng ký; xem ô trống theo khung giờ (`fn_is_space_available`), giá theo giờ bắt đầu (`fn_select_tariff`), đặt chỗ, hủy chỗ, xem và thanh toán hóa đơn (cổng thanh toán mô phỏng) |
-| MANAGER | `/manager` | Chỉ thấy bãi được phân công: sơ đồ ô, báo lỗi/bảo trì/sẵn sàng thiết bị, xác nhận đặt chỗ, hủy đặt chỗ quá 30 phút |
-| ADMIN | `/admin` | Doanh thu, sửa biểu giá, phân công quản lý cho bãi, tạo tài khoản MANAGER/ADMIN, đối soát hóa đơn |
+| CUSTOMER | `/register`, `/customer` | Tự đăng ký; xem ô trống theo khung giờ (`fn_is_space_available`), giá theo giờ bắt đầu (`fn_select_tariff`), đặt chỗ, hủy chỗ, xem và thanh toán hóa đơn (cổng thanh toán mô phỏng; hóa đơn chuyển sang "Chờ quản lý xác nhận"). Đặt trước tối đa 30 ngày, giữ tối đa 3 lượt, phải trả hết hóa đơn mới đặt tiếp |
+| MANAGER | `/manager` | Chỉ thấy bãi được phân công: sơ đồ ô, báo lỗi/bảo trì/sẵn sàng thiết bị, xác nhận đặt chỗ, hủy đặt chỗ quá 30 phút, ghi nhận khách đến ô chỉ đỗ xe, bắt đầu và kết thúc phiên sạc, bảng "Xe đang đỗ" tự cập nhật mỗi 15 giây, lịch đặt chỗ theo ngày kèm thông tin xe và khách, thanh thời gian 0h–24h cho từng ô (xanh trống, vàng đã đặt, đỏ đang sử dụng, vạch đen là bây giờ), xác nhận hoặc từ chối thanh toán của khách ở mục "Cần xử lý" |
+| ADMIN | `/admin` | Doanh thu, sửa biểu giá, phân công quản lý cho bãi, tạo tài khoản MANAGER/ADMIN, xóa và khôi phục tài khoản MANAGER/CUSTOMER, đối soát hóa đơn, đối soát lịch đặt theo thời gian thực (tab "Đối soát lịch đặt": tổng hợp theo bãi, tự phát hiện chỗ lệch giữa trạng thái ô, lượt đặt, phiên sạc và hóa đơn, thanh thời gian mọi bãi, bảng lượt đặt có lọc ngày/bãi/trạng thái; tự cập nhật mỗi 15 giây) |
+
+## Diễn thử luồng sạc
+
+Tài khoản khách demo có sẵn một hóa đơn chờ thanh toán: hãy thanh toán trước rồi mới đặt được chỗ.
+
+1. Khách đặt một ô có trụ sạc, giờ bắt đầu trong vòng 15 phút tới.
+2. Quản lý xác nhận, chọn biển số trong danh sách (được điền sẵn khi đã tới giờ nhận chỗ), nhập % pin lúc cắm rồi bấm "Bắt đầu sạc".
+3. Quản lý bấm "Kết thúc sạc"; trang hiện ngay bảng chi tiết hóa đơn vừa lập (khách, xe, ô và trụ, giờ bắt đầu/kết thúc, % pin, kWh × đơn giá, phí quá giờ, tổng, trạng thái; có nút In). Điện năng (công suất trụ × thời gian × 90 %, dừng khi pin đầy), thời điểm đầy pin và phí quá giờ được tự tính; hóa đơn lập tự động. Phiên vừa bắt đầu sẽ có điện năng rất nhỏ; muốn thấy số lớn hãy dùng một phiên đang mở sẵn. Phiên cũ không có % pin thì coi như cắm ở 20 %.
+4. Khách thanh toán hóa đơn; hóa đơn chuyển sang "Chờ quản lý xác nhận".
+5. Quản lý bãi nơi khách sạc bấm "Xác nhận" (hóa đơn thành Đã thanh toán) hoặc "Từ chối" (Thất bại, khách thanh toán lại được). CSDL ghi lại quản lý đã xác nhận (`confirmed_by_identifier`, `confirmed_datetime`). Khách chỉ đặt chỗ mới được khi mọi hóa đơn đã được quản lý xác nhận.
 
 ## API giờ và đồng hồ
 
@@ -59,18 +74,19 @@ Khung "Phiên đang sạc" chỉ hiện khi tài khoản có phiên chưa kết 
 ## Tài khoản
 - `sql/demo_accounts.sql` chỉ chứa mật khẩu đã băm (scrypt). Mật khẩu gốc ở `DEMO_ACCOUNTS.md`.
 - Tạo lại với mật khẩu mới: `python scripts/create_demo_accounts.py` rồi nạp lại file SQL (tài khoản đã tồn tại sẽ được giữ, nên xóa dòng cũ trước khi nạp).
-- Tài khoản trong `seed.sql` dùng mật khẩu băm giả, không đăng nhập được. Đây là chủ ý của dữ liệu mẫu.
-- Admin tạo tài khoản MANAGER/ADMIN trong tab Tài khoản và **tự nhập mật khẩu** (tối thiểu 8 ký tự, nhập lại để xác nhận). Hệ thống chỉ lưu bản băm và không hiển thị lại mật khẩu.
-- Khách hàng tự đăng ký tại `/register` (liên kết ở trang đăng nhập): họ tên, email, số điện thoại, mật khẩu và xe đầu tiên (biển số, dung lượng pin). Vai trò luôn là `CUSTOMER`; tài khoản và xe được tạo trong một câu SQL nên không có tài khoản thiếu xe. Email, số điện thoại và biển số trùng sẽ báo lỗi riêng. Đăng ký xong quay về trang đăng nhập.
-- Demo chưa giới hạn số lần đăng ký hoặc đăng nhập; trang đăng ký công khai và thông báo trùng email cho biết email đã tồn tại.
+- Tài khoản trong `seed.sql` dùng mật khẩu băm giả, không đăng nhập được. Đây là chủ ý của dữ liệu mẫu. Admin bấm "Đặt lại" để cấp mật khẩu mới nếu muốn đăng nhập bằng các tài khoản này.
+- Admin tạo tài khoản MANAGER/ADMIN trong tab Tài khoản và **tự nhập mật khẩu** (tối thiểu 8 ký tự, nhập lại để xác nhận).
+- Admin xem được mật khẩu của mọi tài khoản ở tab Tài khoản (cột `password_plain_text`; đăng nhập vẫn kiểm bản băm). Tài khoản tạo trước khi có cột này hiện "Chưa lưu" cho tới lần đăng nhập kế tiếp; nút "Đặt lại" tạo mật khẩu ngẫu nhiên mới và hiện cho admin. Đây là yêu cầu của đồ án, không nên dùng cho hệ thống thật.
+- Admin xóa được tài khoản MANAGER và CUSTOMER (không xóa được ADMIN). Bấm "Xóa" sẽ mở bảng hỏi lại; nếu khách đang sạc hoặc còn hóa đơn chưa trả thì có lưu ý. Lượt đặt sắp tới bị hủy, xe ngừng dùng, phân công bãi bị thu hồi, phiên đăng nhập hết hiệu lực.
+- Khôi phục trong 30 phút ở bảng "Tài khoản đã xóa" (xe được khôi phục; lượt đặt và phân công bãi thì không). Email, số điện thoại hoặc biển số đã được người khác đăng ký lại thì không khôi phục được.
+- Quá 30 phút: xóa vĩnh viễn thông tin cá nhân; phiên sạc và hóa đơn được giữ, hóa đơn vẫn ghi tên, điện thoại, email, biển số. Không có pg_cron nên việc này chạy khi web được dùng (và ngay khi mở tab Tài khoản).
+- Khách hàng tự đăng ký tại `/register` (liên kết ở trang đăng nhập): họ tên, email, số điện thoại, mật khẩu và xe đầu tiên (biển số, dung lượng pin). Vai trò luôn là `CUSTOMER`; tài khoản và xe được tạo trong một câu SQL nên không có tài khoản thiếu xe. Email, số điện thoại và biển số trùng sẽ báo lỗi riêng. Đăng ký xong quay về trang đăng nhập. Khách thêm xe khác ở mục "Xe của tôi" trên trang `/customer`.
+- Đăng nhập sai 5 lần (theo địa chỉ máy và email) bị khóa 5 phút. Demo chưa giới hạn số lần đăng ký; trang đăng ký công khai và thông báo trùng email cho biết email đã tồn tại.
 
 ## Lưu ý
 - Ứng dụng không dùng PostGIS, nên chạy được cả khi CSDL dùng `GEOMETRY` lẫn `POINT`.
 - Các form POST có mã CSRF; phân quyền kiểm tra ở từng route và trong câu SQL (quản lý chỉ sửa được thiết bị thuộc bãi mình phụ trách).
-- Đây là bản demo: chưa có HTTPS, giới hạn số lần đăng nhập, hay cổng thanh toán thật.
-- Hạn chế của lược đồ hiện tại đã nêu trong phần review (chưa có biểu giá cho ô chỉ đỗ xe, chưa có chỉ số sạc theo thời gian, chưa chặn check-in sớm) thể hiện trực tiếp trên giao diện.
-
-## Chạy trên GitHub Codespaces
-Bấm **Code → Codespaces → Create codespace**. Thư mục `.devcontainer/` tự dựng PostgreSQL + PostGIS, nạp `schema.sql` và `seed.sql`, tạo tài khoản demo (mật khẩu ở `demo_app/DEMO_ACCOUNTS.md`) và chạy Flask ở cổng 5000 (tab **Ports**). Sau khi Codespace khởi động, chạy kiểm thử bằng `pytest tests`.
-
-Sau khi Codespace mở, chỉ cần chạy `bash run.sh` trong terminal: script tự cài, đợi CSDL, bật Flask và in đường link mở web.
+- Đây là bản demo: chưa có HTTPS hay cổng thanh toán thật. Không đặt `SECRET_KEY` thì khóa được sinh ngẫu nhiên, khởi động lại là phải đăng nhập lại.
+- Danh sách phiên đăng xuất được giữ trong bộ nhớ: khi chạy nhiều tiến trình hoặc khởi động lại mà vẫn dùng cùng `SECRET_KEY`, cookie đã đăng xuất chưa bị chặn.
+- Đặt chỗ quá hạn được hủy khi có người mở trang khách, quản lý hoặc admin (tối đa mỗi phút một lần).
+- Hạn chế của lược đồ đã nêu trong phần review (chưa có biểu giá cho ô chỉ đỗ xe, chưa có chỉ số sạc theo thời gian) thể hiện trực tiếp trên giao diện.

@@ -56,7 +56,7 @@ Với quan hệ 1:1, khóa ngoại đặt ở phía có **tham gia toàn phần*
 | Quan hệ ERD | Tham gia | Ánh xạ | Ghi chú |
 |---|---|---|---|
 | PARKING_SPACE **1** — **0..1** CHARGING_EQUIPMENT | Thiết bị luôn thuộc một ô; ô có thể không có thiết bị | `charging_equipment.space_identifier` là *FK* + `UNIQUE` (từng phần) `NOT NULL` | Dùng cách "tách bảng" thay vì gộp để tránh NULL ở các ô đỗ thường. |
-| SERVICE_SESSION **1** — **1** PAYMENT_TRANSACTION | Mỗi giao dịch thuộc đúng một phiên | `payment_transaction.session_identifier` là *FK* + `UNIQUE` `NOT NULL` | Giao dịch được trigger `trg_session_finish` tự tạo khi phiên kết thúc. |
+| SERVICE_SESSION **1** — **0..1** PAYMENT_TRANSACTION | Mỗi giao dịch thuộc đúng một phiên | `payment_transaction.session_identifier` là *FK* + `UNIQUE` `NOT NULL` | Giao dịch được trigger `trg_session_finish` tự tạo khi phiên kết thúc. |
 | RESERVATION **0..1** — **0..1** SERVICE_SESSION | Phiên có thể không có đặt chỗ (khách vãng lai) | `service_session.reservation_identifier` là *FK* nullable + `UNIQUE` | Một lượt đặt sinh tối đa một phiên. |
 
 ### Bước 4. Quan hệ 1:N
@@ -71,8 +71,9 @@ Khóa chính phía **1** được thêm vào phía **N** làm khóa ngoại.
 | `vehicle` | `service_session` | `vehicle_identifier` | Có | RESTRICT |
 | `charging_equipment` | `service_session` | `equipment_identifier` | Có | RESTRICT |
 | `tariff_rate` | `payment_transaction` | `rate_identifier` | Có | RESTRICT |
+| `user_account` (MANAGER) | `payment_transaction` | `confirmed_by_identifier` | Không | RESTRICT |
 
-**Quan hệ đã loại bỏ so với bản trước:** `user_account` → `reservation` và `user_account` → `service_session` không còn khóa ngoại riêng. Tài khoản của một lượt đặt hoặc phiên sạc được suy ra qua chủ xe (`vehicle.account_identifier`), tránh dư thừa và phụ thuộc bắc cầu.
+**Quan hệ đã loại bỏ so với thiết kế trước:** `user_account` → `reservation` và `user_account` → `service_session` không còn khóa ngoại riêng. Tài khoản của một lượt đặt hoặc phiên sạc được suy ra qua chủ xe (`vehicle.account_identifier`), tránh dư thừa và phụ thuộc bắc cầu.
 
 ### Bước 5. Quan hệ M:N
 Mỗi quan hệ M:N trở thành một quan hệ trung gian có khóa chính ghép từ hai khóa ngoại.
@@ -102,13 +103,14 @@ Không lưu các giá trị có thể tính từ dữ liệu khác, ngoại tr�
 |---|---|
 | Tài khoản của đặt chỗ / phiên sạc | Suy ra qua `vehicle.account_identifier`. |
 | Khả dụng của ô đỗ trong một khung giờ | Tính bằng `fn_is_space_available(space, start, end)`; cột `availability_status_code` chỉ là trạng thái **hiện tại**. |
+| Đơn giá của phiên | Lưu **snapshot** `applied_price_per_kwh_value`, `applied_overtime_fee_per_hour_value` trên `service_session` lúc bắt đầu sạc. |
 | Số tiền hóa đơn | Lưu **snapshot** `energy_amount_value`, `overtime_amount_value`, `transaction_amount_value` để hóa đơn không đổi khi bảng giá thay đổi; `CHECK` tổng bằng hai thành phần. |
 
 ---
 
 ## 3. Lược đồ quan hệ kết quả (10 quan hệ)
 
-1. `user_account` (**account_identifier**, full_name_text `[NN]`, contact_phone_number `[UQ][NN]`, email_address `[UQ][NN]`, password_hash_text `[NN]`, role_code `[NN]`, created_datetime `[NN]`, deleted_datetime)
+1. `user_account` (**account_identifier**, full_name_text `[NN]`, contact_phone_number `[UQ][NN]`, email_address `[UQ][NN]`, password_hash_text `[NN]`, password_plain_text, role_code `[NN]`, created_datetime `[NN]`, deleted_datetime, purged_datetime)
 2. `vehicle` (**vehicle_identifier**, *account_identifier* `[NN]`, license_plate_text `[UQ][NN]`, battery_capacity_kwh `[NN]`, deleted_datetime)
 3. `parking_facility` (**facility_identifier**, facility_name_text `[NN]`, geographic_location `[NN]`, address_text `[NN]`, total_capacity_count `[NN]`)
 4. `facility_manager` (***manager_identifier***, ***facility_identifier***)
@@ -116,8 +118,8 @@ Không lưu các giá trị có thể tính từ dữ liệu khác, ngoại tr�
 6. `charging_equipment` (**equipment_identifier**, *space_identifier* `[UQ][NN]`, evse_identifier `[UQ][NN]`, connector_type_code `[NN]`, max_power_kw `[NN]`, equipment_status_code `[NN]`, deleted_datetime)
 7. `tariff_rate` (**rate_identifier**, connector_type_code `[NN]`, time_band_code `[NN]`, start_time `[NN]`, end_time `[NN]`, min_power_kw `[NN]`, max_power_kw `[NN]`, price_per_kwh_value `[NN]`, overtime_fee_per_hour_value `[NN]`)
 8. `reservation` (**reservation_identifier**, *vehicle_identifier* `[NN]`, *space_identifier* `[NN]`, start_datetime `[NN]`, end_datetime `[NN]`, reservation_status_code `[NN]`, created_datetime `[NN]`, deleted_datetime)
-9. `service_session` (**session_identifier**, *reservation_identifier* `[UQ]`, *vehicle_identifier* `[NN]`, *equipment_identifier* `[NN]`, start_datetime `[NN]`, end_datetime, fully_charged_datetime, peak_charging_power_kw `[NN]`, consumed_energy_kwh `[NN]`)
-10. `payment_transaction` (**transaction_identifier**, *session_identifier* `[UQ][NN]`, *rate_identifier* `[NN]`, energy_amount_value `[NN]`, overtime_amount_value `[NN]`, transaction_amount_value `[NN]`, currency_code `[NN]`, payment_method_code, gateway_reference_identifier, transaction_status_code `[NN]`, created_datetime `[NN]`)
+9. `service_session` (**session_identifier**, *reservation_identifier* `[UQ]`, *vehicle_identifier* `[NN]`, *equipment_identifier* `[NN]`, start_datetime `[NN]`, end_datetime, fully_charged_datetime, peak_charging_power_kw `[NN]`, consumed_energy_kwh `[NN]`, applied_price_per_kwh_value, applied_overtime_fee_per_hour_value, start_battery_percent)
+10. `payment_transaction` (**transaction_identifier**, *session_identifier* `[UQ][NN]`, *rate_identifier* `[NN]`, energy_amount_value `[NN]`, overtime_amount_value `[NN]`, transaction_amount_value `[NN]`, currency_code `[NN]`, payment_method_code, gateway_reference_identifier, transaction_status_code `[NN]`, created_datetime `[NN]`, customer_name_text `[NN]`, customer_phone_number `[NN]`, customer_email_address `[NN]`, license_plate_text `[NN]`, *confirmed_by_identifier*, confirmed_datetime)
 
 ---
 
@@ -137,6 +139,7 @@ Không lưu các giá trị có thể tính từ dữ liệu khác, ngoại tr�
 | 10 | `service_session` | `equipment_identifier` | `charging_equipment` | `equipment_identifier` | RESTRICT | Bảo toàn lịch sử phiên sạc. |
 | 11 | `payment_transaction` | `session_identifier` | `service_session` | `session_identifier` | RESTRICT | Audit log tài chính không được mất. |
 | 12 | `payment_transaction` | `rate_identifier` | `tariff_rate` | `rate_identifier` | RESTRICT | Hóa đơn phải truy vết được ô giá đã áp dụng. |
+| 13 | `payment_transaction` | `confirmed_by_identifier` | `user_account` | `account_identifier` | RESTRICT | Giữ người đã xác nhận thanh toán; tài khoản quản lý đó chỉ bị ẩn thông tin, không xóa hẳn. |
 
 Nguyên tắc: **CASCADE** cho cấu trúc sở hữu/hạ tầng; **RESTRICT** cho dữ liệu lịch sử và tài chính; **SET NULL** chỉ cho liên kết lịch sử không bắt buộc (mục 8). Vì tài khoản, xe, ô đỗ dùng xóa mềm nên việc xóa vật lý chỉ xảy ra ngoài luồng nghiệp vụ thông thường.
 
@@ -153,11 +156,21 @@ Một số quy tắc nghiệp vụ không thể mô tả bằng phép ánh xạ 
 | Mỗi thiết bị chỉ có một phiên đang mở | Chỉ mục duy nhất từng phần `ux_service_session_open_equipment` (`WHERE end_datetime IS NULL`) |
 | Khách vãng lai không chen vào lịch đã đặt | Trigger `trg_session_validate` |
 | Chỉ MANAGER được phân công bãi | Trigger `trg_facility_manager_role` |
+| Chỉ CUSTOMER được sở hữu xe | Trigger `trg_vehicle_owner_role` |
 | Số ô đỗ không vượt sức chứa | Trigger `trg_space_capacity` |
 | Không đặt chỗ ở ô `OUTOFSERVICE` | Trigger `trg_reservation_validate` |
 | Thiết bị `FAULT`/`MAINTENANCE` ⇒ ô `OUTOFSERVICE` | Trigger `trg_equipment_status_sync` |
 | Tự lập hóa đơn khi kết thúc phiên | Trigger `trg_session_finish` (chọn giá bằng `fn_select_tariff`) |
 | Hóa đơn bất biến | Trigger `trg_payment_immutable` + FK `RESTRICT` |
+| Hóa đơn giữ thông tin khách | `trg_payment_snapshot` |
+| Xóa vĩnh viễn sau 30 phút | `fn_purge_deleted_accounts` |
+| Không đổi vai trò khi còn xe / phân công; không xóa ADMIN; xóa mềm thì dọn lượt đặt, phân công và xe; khôi phục trong 30 phút | `trg_account_guard` |
+| Không sửa xe, ô, giờ của lượt đặt | `trg_reservation_fixed` |
+| Không xóa phiên; xe, trụ, giờ bắt đầu, giá chốt cố định | `trg_session_fixed` |
+| Điện năng không vượt pin và công suất × thời gian | `trg_session_energy_limit` |
+| Trạng thái trụ `CHARGING` khớp phiên đang mở | `trg_equipment_charging_guard` |
+| Chỉ lập hóa đơn cho phiên đã kết thúc | `trg_payment_requires_end` |
+| Xóa mềm ô đỗ | `trg_space_removal` |
 | Tự hủy đặt chỗ sau 30 phút | Hàm `fn_expire_overdue_reservations()` (pg_cron mỗi phút) |
 
 ---
@@ -182,7 +195,7 @@ Một số quy tắc nghiệp vụ không thể mô tả bằng phép ánh xạ 
 | Hạng mục | Kết quả |
 |---|---|
 | Số thực thể ERD → số quan hệ | 9 thực thể + 1 bảng trung gian (M:N) = **10 quan hệ** |
-| Số đường quan hệ trong ERD → khóa ngoại | 12 đường quan hệ = 7 (1:N) + 3 (1:1) + 2 (hai nhánh của `facility_manager`) = **12 khóa ngoại** |
+| Số đường quan hệ trong ERD → khóa ngoại | 13 đường quan hệ = 8 (1:N, gồm CONFIRMS) + 3 (1:1) + 2 (hai nhánh của `facility_manager`) = **13 khóa ngoại** |
 | Mọi cột trong ERD có mặt trong `schema.sql` | Có (đã đối chiếu tự động tên cột ERD với DDL) |
 | Mọi khóa ngoại có chính sách ON DELETE | Có (mục 4) |
 | Thuộc tính đa trị / n-ngôi | Không phát sinh |

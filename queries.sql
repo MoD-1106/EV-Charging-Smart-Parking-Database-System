@@ -1,17 +1,17 @@
 -- =============================================================================
--- Smart City EV Charging & Parking Management - analytical queries - v0.3.1
--- Run on a database loaded with schema.sql + seed.sql:
+-- Quản lý trạm sạc xe điện và bãi đỗ thông minh - truy vấn phân tích
+-- Chạy trên cơ sở dữ liệu đã nạp schema.sql + seed.sql:
 --     psql -d evt -f queries.sql
--- 12 queries (Q1-Q12) run on plain PostgreSQL; Q13 needs PostGIS.
--- Each query states the business question, the SQL features it shows and the
--- tables it touches. All times are shown in Asia/Ho_Chi_Minh.
+-- 12 truy vấn (Q1-Q12) chạy trên PostgreSQL thuần; Q13 cần PostGIS.
+-- Mỗi truy vấn nêu câu hỏi nghiệp vụ, tính năng SQL được dùng và các bảng
+-- liên quan. Mọi mốc thời gian hiển thị theo Asia/Ho_Chi_Minh.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
--- Q1. Charging history of one customer, with invoice (JOIN of 7 tables)
--- Question : what did customer "Đặng Quốc Phong" charge, where and for how much?
--- Features : INNER/LEFT JOIN, ORDER BY, LIMIT
--- Tables   : user_account, vehicle, service_session, charging_equipment,
+-- Q1. Lịch sử sạc của một khách hàng kèm hóa đơn (JOIN 7 bảng)
+-- Câu hỏi  : khách "Đặng Quốc Phong" đã sạc gì, ở đâu và hết bao nhiêu tiền?
+-- Kỹ thuật : INNER/LEFT JOIN, ORDER BY, LIMIT
+-- Bảng     : user_account, vehicle, service_session, charging_equipment,
 --            parking_space, parking_facility, payment_transaction
 -- -----------------------------------------------------------------------------
 SELECT u.full_name_text,
@@ -35,11 +35,11 @@ ORDER BY ss.start_datetime DESC
 LIMIT 10;
 
 -- -----------------------------------------------------------------------------
--- Q2. Revenue by facility and tariff band (aggregation + HAVING)
--- Question : which facility / band combinations earned more than 1,000,000 VND
---            from successful payments?
--- Features : GROUP BY, SUM/COUNT/AVG, HAVING
--- Tables   : payment_transaction, tariff_rate, service_session,
+-- Q2. Doanh thu theo bãi và khung giá (gộp nhóm + HAVING)
+-- Câu hỏi  : cặp bãi / khung giá nào thu hơn 1.000.000 VND
+--            từ các thanh toán thành công?
+-- Kỹ thuật : GROUP BY, SUM/COUNT/AVG, HAVING
+-- Bảng     : payment_transaction, tariff_rate, service_session,
 --            charging_equipment, parking_space, parking_facility
 -- -----------------------------------------------------------------------------
 SELECT f.facility_name_text,
@@ -61,12 +61,12 @@ HAVING sum(p.transaction_amount_value) > 1000000
 ORDER BY f.facility_name_text, total_revenue DESC;
 
 -- -----------------------------------------------------------------------------
--- Q3. Charger utilisation per facility over the last 30 days of history
---     (CTE + conditional aggregation)
--- Question : what share of the available charger-hours was actually used?
--- Features : WITH (CTE), GREATEST/LEAST clipping of intervals, ratio
--- Tables   : service_session, charging_equipment, parking_space, parking_facility
--- Window   : 2026-09-27 .. 2026-10-27 (fixed so the result is reproducible)
+-- Q3. Hiệu suất sử dụng trụ sạc theo bãi trong 30 ngày cuối của lịch sử
+--     (CTE + gộp nhóm có điều kiện)
+-- Câu hỏi  : tỷ lệ giờ-trụ khả dụng thực sự được dùng là bao nhiêu?
+-- Kỹ thuật : WITH (CTE), cắt khoảng thời gian bằng GREATEST/LEAST, tỷ lệ
+-- Bảng     : service_session, charging_equipment, parking_space, parking_facility
+-- Kỳ xét   : 2026-09-27 .. 2026-10-27 (cố định để kết quả tái lập được)
 -- -----------------------------------------------------------------------------
 WITH period AS (
     SELECT TIMESTAMPTZ '2026-09-27 00:00:00+07' AS period_start,
@@ -105,10 +105,10 @@ LEFT JOIN used AS u ON u.facility_identifier = f.facility_identifier
 ORDER BY utilisation_percent DESC;
 
 -- -----------------------------------------------------------------------------
--- Q4. Chargers that were never used in the last 30 days (NOT EXISTS anti-join)
--- Question : which chargers earn nothing and may need relocation or checking?
--- Features : correlated NOT EXISTS subquery
--- Tables   : charging_equipment, parking_space, parking_facility, service_session
+-- Q4. Trụ sạc không được dùng trong 30 ngày cuối (anti-join bằng NOT EXISTS)
+-- Câu hỏi  : trụ nào không tạo doanh thu, cần di dời hoặc kiểm tra?
+-- Kỹ thuật : truy vấn con tương quan NOT EXISTS
+-- Bảng     : charging_equipment, parking_space, parking_facility, service_session
 -- -----------------------------------------------------------------------------
 SELECT f.facility_name_text,
        s.space_code,
@@ -126,12 +126,12 @@ WHERE NOT EXISTS (
 ORDER BY f.facility_name_text, s.space_code;
 
 -- -----------------------------------------------------------------------------
--- Q5. Sessions much longer than the average of the same charger type
---     (correlated scalar subquery)
--- Question : which sessions lasted more than twice the average duration of
---            their connector type? (possible stuck or abandoned vehicles)
--- Features : scalar subquery in WHERE, interval arithmetic
--- Tables   : service_session, charging_equipment, vehicle
+-- Q5. Phiên sạc dài hơn nhiều so với trung bình cùng loại trụ
+--     (truy vấn con vô hướng tương quan)
+-- Câu hỏi  : phiên nào kéo dài hơn hai lần thời lượng trung bình của
+--            loại cổng đó? (xe có thể bị kẹt hoặc bỏ quên)
+-- Kỹ thuật : truy vấn con vô hướng trong WHERE, phép tính interval
+-- Bảng     : service_session, charging_equipment, vehicle
 -- -----------------------------------------------------------------------------
 SELECT v.license_plate_text,
        ce.connector_type_code,
@@ -153,10 +153,10 @@ ORDER BY duration_hours DESC
 LIMIT 10;
 
 -- -----------------------------------------------------------------------------
--- Q6. Top customers by energy per month with ranking (window function)
--- Question : who are the top 3 energy consumers in each month?
--- Features : CTE, RANK() OVER (PARTITION BY ... ORDER BY ...), date_trunc
--- Tables   : user_account, vehicle, service_session
+-- Q6. Khách hàng dùng nhiều điện nhất mỗi tháng kèm xếp hạng (hàm cửa sổ)
+-- Câu hỏi  : 3 khách tiêu thụ điện nhiều nhất mỗi tháng là ai?
+-- Kỹ thuật : CTE, RANK() OVER (PARTITION BY ... ORDER BY ...), date_trunc
+-- Bảng     : user_account, vehicle, service_session
 -- -----------------------------------------------------------------------------
 WITH monthly AS (
     SELECT date_trunc('month', ss.start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::DATE
@@ -182,11 +182,11 @@ WHERE energy_rank <= 3
 ORDER BY month_start, energy_rank;
 
 -- -----------------------------------------------------------------------------
--- Q7. Daily revenue with running total and 7-day moving average
---     (window frames)
--- Question : how does revenue evolve day by day?
--- Features : SUM() OVER (ORDER BY ...), AVG() OVER (ROWS BETWEEN 6 PRECEDING ...)
--- Tables   : payment_transaction
+-- Q7. Doanh thu theo ngày kèm lũy kế và trung bình trượt 7 ngày
+--     (khung cửa sổ)
+-- Câu hỏi  : doanh thu thay đổi theo từng ngày ra sao?
+-- Kỹ thuật : SUM() OVER (ORDER BY ...), AVG() OVER (ROWS BETWEEN 6 PRECEDING ...)
+-- Bảng     : payment_transaction
 -- -----------------------------------------------------------------------------
 WITH daily AS (
     SELECT (p.created_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::DATE AS revenue_date,
@@ -206,11 +206,11 @@ ORDER BY revenue_date
 LIMIT 20;
 
 -- -----------------------------------------------------------------------------
--- Q8. Overtime (idle after full charge): who occupies chargers too long?
--- Question : which vehicles pay the most overtime fees, and what share of
---            their bill is overtime?
--- Features : GROUP BY, HAVING, ratio, NULLIF to avoid division by zero
--- Tables   : payment_transaction, service_session, vehicle, user_account
+-- Q8. Quá giờ (đỗ tiếp sau khi sạc đầy): ai chiếm trụ sạc quá lâu?
+-- Câu hỏi  : xe nào trả phí quá giờ nhiều nhất, và phí quá giờ chiếm
+--            bao nhiêu phần hóa đơn?
+-- Kỹ thuật : GROUP BY, HAVING, tỷ lệ, NULLIF để tránh chia cho 0
+-- Bảng     : payment_transaction, service_session, vehicle, user_account
 -- -----------------------------------------------------------------------------
 SELECT u.full_name_text,
        v.license_plate_text,
@@ -229,10 +229,10 @@ ORDER BY overtime_total DESC
 LIMIT 10;
 
 -- -----------------------------------------------------------------------------
--- Q9. Reliability of customers' reservations (conditional aggregation)
--- Question : which customers often book but do not show up?
--- Features : COUNT(*) FILTER, HAVING, LEFT JOIN-free aggregation by account
--- Tables   : reservation, vehicle, user_account
+-- Q9. Độ tin cậy trong đặt chỗ của khách (gộp nhóm có điều kiện)
+-- Câu hỏi  : khách nào hay đặt nhưng không đến?
+-- Kỹ thuật : COUNT(*) FILTER, HAVING, gộp theo tài khoản không dùng LEFT JOIN
+-- Bảng     : reservation, vehicle, user_account
 -- -----------------------------------------------------------------------------
 SELECT u.full_name_text,
        count(*)                                                   AS total_bookings,
@@ -249,11 +249,11 @@ HAVING count(*) FILTER (WHERE r.reservation_status_code = 'EXPIRED') >= 3
 ORDER BY no_show_percent DESC, total_bookings DESC;
 
 -- -----------------------------------------------------------------------------
--- Q10. Demand by hour of day and applicable band (time bucketing)
--- Question : at which local hours do customers start charging, and is the
---            price band matched to demand?
--- Features : EXTRACT(HOUR ...), CASE, GROUP BY expression, percentage of total
--- Tables   : service_session
+-- Q10. Nhu cầu theo giờ trong ngày và khung giá áp dụng (chia nhóm thời gian)
+-- Câu hỏi  : khách bắt đầu sạc vào giờ địa phương nào, và khung giá
+--            có khớp với nhu cầu không?
+-- Kỹ thuật : EXTRACT(HOUR ...), CASE, GROUP BY biểu thức, phần trăm trên tổng
+-- Bảng     : service_session
 -- -----------------------------------------------------------------------------
 WITH by_hour AS (
     SELECT extract(hour FROM ss.start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::INT
@@ -274,14 +274,14 @@ FROM by_hour AS h
 ORDER BY h.start_hour;
 
 -- -----------------------------------------------------------------------------
--- Q11. Running sessions that may block the next booking on the same space
---      (state-dependent query using now())
--- Question : which charging sessions started now collide with a booking that
---            begins within the next 3 hours on the same space?
--- Features : JOIN on time range, interval comparison, current-state operations
--- Tables   : service_session, charging_equipment, reservation, vehicle
--- Note     : returns the rows present when the seed was loaded; results depend
---            on the current time.
+-- Q11. Phiên đang sạc có thể cản lượt đặt kế tiếp trên cùng ô
+--      (truy vấn theo trạng thái hiện tại, dùng now())
+-- Câu hỏi  : phiên sạc đang chạy nào đụng với lượt đặt bắt đầu trong
+--            3 giờ tới trên cùng ô đỗ?
+-- Kỹ thuật : JOIN theo khoảng thời gian, so sánh interval, vận hành thời gian thực
+-- Bảng     : service_session, charging_equipment, reservation, vehicle
+-- Lưu ý    : trả về các dòng có từ lúc nạp dữ liệu mẫu; kết quả phụ thuộc
+--            vào thời điểm hiện tại.
 -- -----------------------------------------------------------------------------
 SELECT f.facility_name_text,
        s.space_code,
@@ -306,12 +306,12 @@ WHERE ss.end_datetime IS NULL
 ORDER BY r.start_datetime;
 
 -- -----------------------------------------------------------------------------
--- Q12. Average price per kWh actually charged, by connector type and power tier
---      (checks the power-based tariff design)
--- Question : do the 100+ kW tier and the peak band really cost more per kWh?
--- Features : GROUP BY with joins on the tariff, weighted average (SUM/SUM),
---            UNION ALL for a grand-total row
--- Tables   : payment_transaction, tariff_rate, service_session
+-- Q12. Giá trung bình mỗi kWh thực thu, theo loại cổng và mức công suất
+--      (kiểm tra thiết kế biểu giá theo công suất)
+-- Câu hỏi  : mức từ 100 kW và khung cao điểm có thật sự đắt hơn mỗi kWh?
+-- Kỹ thuật : GROUP BY kết hợp JOIN biểu giá, trung bình có trọng số (SUM/SUM),
+--            UNION ALL để thêm dòng tổng cộng
+-- Bảng     : payment_transaction, tariff_rate, service_session
 -- -----------------------------------------------------------------------------
 SELECT t.connector_type_code,
        t.min_power_kw || ' - ' || t.max_power_kw AS power_range_kw,
@@ -333,13 +333,13 @@ JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
 ORDER BY 1, 2, 3;
 
 -- -----------------------------------------------------------------------------
--- Q13. (needs PostGIS) Nearest facilities that currently have a free charger
--- Question : from a customer at (106.70, 10.78), which three facilities are
---            closest and have at least one ready, unreserved charger?
--- Features : spatial KNN (<-> operator uses the GiST index), CTE, LATERAL
--- Tables   : parking_facility, parking_space, charging_equipment
--- Note     : requires the postgis extension; not run in the test environment
---            used for the other queries (no PostGIS there).
+-- Q13. (cần PostGIS) Các bãi gần nhất hiện còn trụ sạc trống
+-- Câu hỏi  : khách ở tọa độ (106.70, 10.78), ba bãi nào gần nhất và
+--            còn ít nhất một trụ sẵn sàng, chưa bị đặt?
+-- Kỹ thuật : KNN không gian (toán tử <-> dùng chỉ mục GiST), CTE, LATERAL
+-- Bảng     : parking_facility, parking_space, charging_equipment
+-- Lưu ý    : cần extension postgis; không chạy trong môi trường kiểm thử
+--            dùng cho các truy vấn khác (ở đó không có PostGIS).
 -- -----------------------------------------------------------------------------
 SELECT f.facility_name_text,
        round(ST_DistanceSphere(

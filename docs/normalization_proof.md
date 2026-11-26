@@ -68,7 +68,8 @@ Tài liệu này trình bày chi tiết chứng minh quá trình chuẩn hóa t�
      `transaction_identifier -> rate_identifier -> price_per_kwh_value`
    * *Giải pháp 3NF:* Tách bảng cấu hình giá `tariff_rate` riêng biệt. Bảng `payment_transaction` chỉ lưu khóa ngoại `rate_identifier` tham chiếu và số tiền tổng `transaction_amount_value` được chốt cố định tại thời điểm xuất hóa đơn.
 3. **Thực thể `service_session`:**
-   * Các thuộc tính phi khóa (`start_datetime`, `end_datetime`, `fully_charged_datetime`, `peak_charging_power_kw`, `consumed_energy_kwh`) phụ thuộc trực tiếp và duy nhất vào khóa chính `session_identifier`. Không tồn tại phụ thuộc Y -> Z giữa các thuộc tính phi khóa.
+   * Các thuộc tính phi khóa (`start_datetime`, `end_datetime`, `fully_charged_datetime`, `peak_charging_power_kw`, `consumed_energy_kwh`, `applied_price_per_kwh_value`, `applied_overtime_fee_per_hour_value`, `start_battery_percent`) phụ thuộc trực tiếp và duy nhất vào khóa chính `session_identifier`. Không tồn tại phụ thuộc Y -> Z giữa các thuộc tính phi khóa.
+   * Hai cột `applied_*` là giá **tại thời điểm bắt đầu phiên**. Chúng không xác định được từ thuộc tính nào khác trong bảng, và không suy lại được từ `tariff_rate` sau khi ADMIN đổi giá, nên không phải dữ liệu trùng lặp.
 
 **Kết luận:** Toàn bộ hệ thống đạt chuẩn **3NF**.
 
@@ -95,24 +96,28 @@ Quy ước: chỉ liệt kê FD không tầm thường; "→ R" nghĩa là xác 
 | 9 | `service_session` | {session_identifier}, {reservation_identifier} (khi khác NULL) | mỗi khóa → R | BCNF |
 | 10 | `payment_transaction` | {transaction_identifier}, {session_identifier} | mỗi khóa → R | BCNF |
 
-**Điểm khác so với bản trước (các FD ngầm đã được loại bỏ):**
+**Điểm khác so với thiết kế trước (các FD ngầm đã được loại bỏ):**
 
 1. **`service_session` không còn `account_identifier`.** Trước đây, khi `reservation_identifier` khác NULL thì `reservation_identifier → account_identifier` đã tồn tại trong cùng bảng (vế trái không phải khóa) ⇒ vi phạm 3NF/BCNF. Hiện nay tài khoản được suy ra qua `vehicle_identifier → account_identifier` (xem bảng `vehicle`), nên `service_session` chỉ còn các FD từ khóa. Lập luận tương tự cho `reservation`.
 2. **`service_session.reservation_identifier` là UNIQUE**, nên FD `reservation_identifier → R` (khi khác NULL) là FD từ khóa ứng viên, phù hợp quan hệ 0..1 – 1 trên ERD.
 3. **`tariff_rate` có khóa ứng viên nghiệp vụ** (loại cổng, nhãn khung giờ, giờ bắt đầu, công suất tối thiểu) và ràng buộc `EXCLUDE` chống chồng ô giá. Nhờ đó với mỗi (loại cổng, giờ, công suất) có **đúng một** ô giá.
-4. **`payment_transaction`:** `rate_identifier` không bị xác định bởi một thuộc tính phi khóa nào trong bảng; việc nó "suy ra được" từ giờ bắt đầu phiên và thiết bị là quy tắc nghiệp vụ tại thời điểm xuất hóa đơn. Lưu lại `rate_identifier` và các số tiền thành phần là **snapshot có chủ đích** để hóa đơn bất biến khi bảng giá thay đổi (xem trigger `trg_payment_immutable`). Ràng buộc `transaction_amount_value = energy_amount_value + overtime_amount_value` là CHECK trong dòng, không tạo phụ thuộc bắc cầu giữa các bảng.
+4. **`payment_transaction`:** `rate_identifier` không bị xác định bởi một thuộc tính phi khóa nào trong bảng; việc nó "suy ra được" từ giờ bắt đầu phiên và thiết bị là quy tắc nghiệp vụ tại thời điểm xuất hóa đơn. Lưu lại `rate_identifier` và các số tiền thành phần là **snapshot có chủ đích** để hóa đơn bất biến khi bảng giá thay đổi (xem trigger `trg_payment_immutable`). Ràng buộc `transaction_amount_value = energy_amount_value + overtime_amount_value` là CHECK trong dòng, không tạo phụ thuộc bắc cầu giữa các bảng. Các cột `customer_name_text`, `customer_phone_number`, `customer_email_address`, `license_plate_text` cũng là snapshot: chúng ghi thông tin **tại thời điểm lập hóa đơn**, có thể khác thông tin hiện tại hoặc còn lại sau khi tài khoản bị xóa, nên không suy được từ bảng khác. Trong bảng, giữa chúng không có FD nào được đảm bảo (một email hay biển số có thể được người khác dùng lại ở thời điểm khác), nên bảng vẫn đạt BCNF.
 
 ---
 
 ## 3. Dư thừa có kiểm soát (không thuộc phạm vi FD trong một quan hệ)
 
-BCNF chỉ xét FD **bên trong** từng quan hệ. Ba thông tin dưới đây phụ thuộc vào dữ liệu ở bảng khác nên được liệt kê riêng cùng cơ chế giữ nhất quán:
+BCNF chỉ xét FD **bên trong** từng quan hệ. Các thông tin dưới đây phụ thuộc vào dữ liệu ở bảng khác nên được liệt kê riêng cùng cơ chế giữ nhất quán:
 
 | Thông tin | Phụ thuộc vào | Cơ chế |
 |---|---|---|
 | `parking_space.availability_status_code` | `reservation`, `service_session`, `charging_equipment.equipment_status_code` | Triggers đồng bộ; khả dụng theo **khung giờ** tính bằng `fn_is_space_available` thay vì cột trạng thái. |
 | `parking_facility.total_capacity_count` | Là sức chứa thiết kế, **không** suy ra từ số dòng `parking_space` | Trigger `trg_space_capacity` chặn vượt sức chứa. |
+| `service_session.applied_*` | `tariff_rate` tại thời điểm bắt đầu phiên | Trigger tự ghi, `trg_session_fixed` không cho sửa. |
 | `payment_transaction` (số tiền, `rate_identifier`) | `service_session`, `tariff_rate` tại thời điểm xuất hóa đơn | Snapshot bất biến + CHECK tổng. |
+| `payment_transaction` (`customer_name_text`, `customer_phone_number`, `customer_email_address`, `license_plate_text`) | `user_account`, `vehicle` tại thời điểm xuất hóa đơn | `trg_payment_snapshot` chụp lại, `trg_payment_immutable` không cho sửa; giữ thông tin khi tài khoản bị xóa vĩnh viễn. |
+| `service_session` (`consumed_energy_kwh`, `fully_charged_datetime`) | `start_battery_percent`, công suất trụ, dung lượng pin, thời gian | Ghi một lần khi kết thúc phiên từ `fn_session_estimate`; sau đó hóa đơn dùng số đã ghi. |
+| `user_account.password_plain_text` | Cùng mật khẩu với `password_hash_text` | Ghi cùng lúc ở mọi đường tạo/đổi mật khẩu; đăng nhập chỉ kiểm bản băm; bị xóa khi xóa vĩnh viễn (yêu cầu của đồ án). |
 
 ## 4. Giới hạn của chuẩn hóa và cơ chế toàn vẹn mở rộng
 

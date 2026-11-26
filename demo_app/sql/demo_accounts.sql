@@ -1,4 +1,4 @@
--- Demo accounts: password hashes only (see DEMO_ACCOUNTS.md for passwords).
+-- Tài khoản demo: chỉ chứa mật khẩu đã băm (mật khẩu gốc xem DEMO_ACCOUNTS.md).
 BEGIN;
 INSERT INTO user_account (full_name_text, contact_phone_number, email_address, password_hash_text, role_code)
 VALUES ('Quản trị demo', '0988000001', 'admin.demo@evcharge.test', 'scrypt:32768:8:1$swRqItEp0I6dDceZ$721036679520e195979067bc04976bfa6f647868991b6dfa902fb3bcfbf57b0ffd7172012d8551ca69425a32729de5cb1d916e5b5d42d51696b9e249761f8e88', 'ADMIN')

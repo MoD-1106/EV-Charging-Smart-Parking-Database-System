@@ -9,7 +9,8 @@ erDiagram
     VEHICLE ||--o{ SERVICE_SESSION : "charges in"
     CHARGING_EQUIPMENT ||--o{ SERVICE_SESSION : "serves"
     RESERVATION |o--o| SERVICE_SESSION : "is fulfilled by"
-    SERVICE_SESSION ||--|| PAYMENT_TRANSACTION : "is billed by"
+    SERVICE_SESSION ||--o| PAYMENT_TRANSACTION : "is billed by"
+    USER_ACCOUNT |o--o{ PAYMENT_TRANSACTION : "confirms (MANAGER)"
     TARIFF_RATE ||--o{ PAYMENT_TRANSACTION : "prices"
 
     USER_ACCOUNT {
@@ -18,9 +19,11 @@ erDiagram
         varchar contact_phone_number UK
         varchar email_address UK
         varchar password_hash_text
+        varchar password_plain_text
         varchar role_code "CUSTOMER|MANAGER|ADMIN"
         timestamptz created_datetime
         timestamptz deleted_datetime
+        timestamptz purged_datetime
     }
     VEHICLE {
         uuid vehicle_identifier PK
@@ -87,6 +90,9 @@ erDiagram
         timestamptz fully_charged_datetime
         decimal peak_charging_power_kw
         decimal consumed_energy_kwh
+        decimal applied_price_per_kwh_value
+        decimal applied_overtime_fee_per_hour_value
+        decimal start_battery_percent
     }
     PAYMENT_TRANSACTION {
         uuid transaction_identifier PK
@@ -100,4 +106,10 @@ erDiagram
         varchar gateway_reference_identifier
         varchar transaction_status_code
         timestamptz created_datetime
+        varchar customer_name_text
+        varchar customer_phone_number
+        varchar customer_email_address
+        varchar license_plate_text
+        uuid confirmed_by_identifier FK
+        timestamptz confirmed_datetime
     }

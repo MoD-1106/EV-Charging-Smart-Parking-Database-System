@@ -1,29 +1,7 @@
--- =============================================================================
--- Smart City EV Charging & Parking Management - mock data (DML) - v0.3.1
--- Run AFTER schema.sql on an EMPTY database:
---     psql -d evt -v ON_ERROR_STOP=1 -f schema.sql
---     psql -d evt -v ON_ERROR_STOP=1 -f seed.sql
--- Do not run on the same database as tests.sql (tests.sql inserts its own
--- tariff rows, which would overlap with the ones below; tests.sql ROLLBACKs
--- by itself, so run it BEFORE seed.sql or on a separate database).
---
--- All history is generated through the real triggers (no trigger is disabled),
--- so the data set itself demonstrates the integrity rules:
---   * sessions are inserted open, then closed with UPDATE ... end_datetime,
---     which makes trg_session_finish issue the invoice automatically;
---   * reservations are inserted as CONFIRMED and become FULFILLED through
---     trg_session_start.
--- History is deterministic (md5 of plate + session start, no random() and no
--- generated UUIDs in any digest): 2026-09-01 .. 2026-10-26.
--- A few rows relative to now() (open sessions, upcoming bookings) are added
--- at the end so that "current state" queries return something.
--- =============================================================================
-
 BEGIN;
 
 -- -----------------------------------------------------------------------------
 -- 1. user_account: 1 ADMIN, 4 MANAGER, 25 CUSTOMER
--- -----------------------------------------------------------------------------
 INSERT INTO user_account
     (full_name_text, contact_phone_number, email_address, password_hash_text,
      role_code, created_datetime)
@@ -49,9 +27,9 @@ FROM (
     ]) AS t(full_name)
 ) AS n;
 
--- -----------------------------------------------------------------------------
--- 2. vehicle: 48 vehicles for the 25 customers (accounts 6..30)
--- -----------------------------------------------------------------------------
+
+-- 2. vehicle: 48 xe của 25 khách hàng (tài khoản 6..30)
+
 INSERT INTO vehicle (account_identifier, license_plate_text, battery_capacity_kwh)
 SELECT c.account_identifier,
        (50 + (g.n % 9)) || CASE g.n % 3 WHEN 0 THEN 'A' WHEN 1 THEN 'B' ELSE 'F' END
@@ -65,10 +43,10 @@ JOIN (
     WHERE role_code = 'CUSTOMER'
 ) AS c ON c.rn = 1 + (g.n - 1) % 25;
 
--- -----------------------------------------------------------------------------
--- 3. parking_facility: 5 facilities, capacity 12 each
--- (coordinates are approximate points in Ho Chi Minh City: longitude, latitude)
--- -----------------------------------------------------------------------------
+
+-- 3. parking_facility: 5 bãi, mỗi bãi sức chứa 12
+-- (tọa độ là các điểm gần đúng tại TP. Hồ Chí Minh: kinh độ, vĩ độ)
+
 INSERT INTO parking_facility
     (facility_name_text, geographic_location, address_text, total_capacity_count)
 VALUES
@@ -83,9 +61,9 @@ VALUES
     ('EV Hub Tân Bình - Sân bay', ST_SetSRID(ST_MakePoint(106.6600, 10.8180), 4326),
      'Trường Sơn, Tân Bình, TP.HCM', 12);
 
--- -----------------------------------------------------------------------------
--- 4. facility_manager (M:N): 4 managers over 5 facilities
--- -----------------------------------------------------------------------------
+
+-- 4. facility_manager (M:N): 4 quản lý cho 5 bãi
+
 INSERT INTO facility_manager (manager_identifier, facility_identifier)
 SELECT m.account_identifier, f.facility_identifier
 FROM (
@@ -98,18 +76,18 @@ JOIN (
 ) AS f ON (m.rn, f.rn) IN ((1, 1), (1, 2), (2, 3), (3, 4), (4, 5), (1, 5));
 
 -- -----------------------------------------------------------------------------
--- 5. parking_space: 12 per facility (A-01 .. A-12)
+-- 5. parking_space: mỗi bãi 12 ô (A-01 .. A-12)
 -- -----------------------------------------------------------------------------
 INSERT INTO parking_space (facility_identifier, space_code)
 SELECT f.facility_identifier, 'A-' || lpad(g.n::TEXT, 2, '0')
 FROM parking_facility AS f
 CROSS JOIN generate_series(1, 12) AS g(n);
 
--- -----------------------------------------------------------------------------
--- 6. charging_equipment: spaces A-01..A-08 of each facility have a charger
+
+-- 6. charging_equipment: các ô A-01..A-08 của mỗi bãi có trụ sạc
 --    A-01, A-02 : FAST_DC 120 kW      A-03 : FAST_DC 60 kW
 --    A-04..A-08 : STANDARD_AC 22 kW (A-07, A-08: 11 kW)
--- -----------------------------------------------------------------------------
+
 INSERT INTO charging_equipment
     (space_identifier, evse_identifier, connector_type_code, max_power_kw)
 SELECT s.space_identifier,
@@ -130,11 +108,11 @@ JOIN (
 ) AS s ON s.facility_identifier = f.facility_identifier
 WHERE s.num <= 8;
 
--- -----------------------------------------------------------------------------
--- 7. tariff_rate: 3 bands x (AC + 2 DC power tiers) = 15 rows, 24 h covered
---    FAST_DC [0,100) kW and [100,1000) kW; STANDARD_AC [0,1000) kW
---    price columns: AC, DC<100, DC>=100  (VND per kWh)
--- -----------------------------------------------------------------------------
+
+-- 7. tariff_rate: 3 khung giờ x (AC + 2 mức công suất DC) = 15 dòng, phủ 24 giờ
+--    FAST_DC [0,100) kW và [100,1000) kW; STANDARD_AC [0,1000) kW
+--    các cột giá: AC, DC<100, DC>=100  (VND mỗi kWh)
+
 INSERT INTO tariff_rate
     (connector_type_code, time_band_code, start_time, end_time,
      min_power_kw, max_power_kw, price_per_kwh_value, overtime_fee_per_hour_value)
@@ -153,14 +131,14 @@ CROSS JOIN (VALUES
     ('OFF_PEAK', '22:00', '24:00', 1500, 30000)
 ) AS b(band, s, e, base_price, overtime);
 
--- -----------------------------------------------------------------------------
--- 8. History 2026-09-01 .. 2026-10-26 (56 days) generated through the triggers
---    One slot per charger per day at most; a slot is skipped when the previous
---    one (booking or session) is not over yet, so slots never overlap.
---    Slot kinds (by hash):
---      0-5 reserved + charged   6 walk-in   7 reservation CANCELLED
---      8   reservation EXPIRED  9 reserved + charged + long idle (overtime)
--- -----------------------------------------------------------------------------
+
+-- 8. Lịch sử 2026-09-01 .. 2026-10-26 (56 ngày) sinh qua trigger
+--    Mỗi trụ tối đa một lượt mỗi ngày; bỏ qua lượt nếu lượt trước đó
+--    (đặt chỗ hoặc phiên sạc) chưa kết thúc, nên các lượt không chồng nhau.
+--    Loại lượt (theo giá trị băm):
+--      0-5 đặt trước + sạc   6 khách vãng lai   7 đặt chỗ bị CANCELLED
+--      8   đặt chỗ EXPIRED   9 đặt trước + sạc + chiếm chỗ lâu (quá giờ)
+
 DO $$
 DECLARE
     v_vehicles   UUID[];
@@ -190,8 +168,8 @@ BEGIN
       INTO v_vehicles
     FROM vehicle;
 
-    -- start-hour distribution (weights for hours 0..23): morning and evening
-    -- peaks, quiet at night
+    -- phân bố giờ bắt đầu (trọng số cho giờ 0..23): cao điểm sáng
+    -- và tối, vắng về đêm
     SELECT array_agg(w.hr)
       INTO v_hours
     FROM unnest(ARRAY[1,1,1,1,1,1, 3,5,6,4,3,3, 4,3,3,3,5,8, 9,8,6,4,3,2])
@@ -209,11 +187,11 @@ BEGIN
             v_day := DATE '2026-09-01' + di;
             h := ('x' || substr(md5(eq.ei || ':' || di), 1, 7))::BIT(28)::INT;
 
-            -- about 70 % of charger-days have an event
+            -- khoảng 70 % số ngày-trụ có phát sinh
             CONTINUE WHEN h % 100 >= 70;
 
-            -- chargers that are out of order now were already idle for the
-            -- last 30 days of history
+            -- trụ hiện đang hỏng đã ngừng hoạt động trong
+            -- 30 ngày cuối của lịch sử
             CONTINUE WHEN eq.evse_identifier IN ('VN*EVH*3*A04', 'VN*EVH*5*A08',
                                                  'VN*EVH*2*A06')
                       AND v_day >= DATE '2026-09-27';
@@ -223,15 +201,15 @@ BEGIN
             v_start     := (v_day + v_hour * INTERVAL '1 hour'
                             + ((h / 20000) % 4) * INTERVAL '15 minutes')
                            AT TIME ZONE 'Asia/Ho_Chi_Minh';
-            v_res_hours := 1 + (h / 80000) % 3;      -- booked window 1..3 h
+            v_res_hours := 1 + (h / 80000) % 3;      -- khung giờ đặt 1..3 giờ
 
-            -- a charger is never booked again before its previous slot is over
+            -- không đặt lại một trụ trước khi lượt trước đó kết thúc
             CONTINUE WHEN v_start < v_busy_until + INTERVAL '30 minutes';
             v_busy_until := v_start + v_res_hours * INTERVAL '1 hour';
 
-            -- a vehicle is never in two places at once: take the first vehicle
-            -- (starting from a deterministic preference) with no booking or
-            -- session within the next 6 hours
+            -- một xe không thể ở hai nơi cùng lúc: lấy xe đầu tiên
+            -- (bắt đầu từ thứ tự ưu tiên tất định) không có lượt đặt hay
+            -- phiên sạc nào trong 6 giờ tiếp theo
             v_vehicle := NULL;
             FOR k IN 0 .. 47 LOOP
                 v_vehicle := v_vehicles[1 + (eq.ei * 7 + di * 13 + k) % 48];
@@ -252,7 +230,7 @@ BEGIN
             END LOOP;
             CONTINUE WHEN v_vehicle IS NULL;
 
-            -- ---- reservation (not for walk-ins) --------------------------------
+            -- ---- đặt chỗ (không áp dụng cho khách vãng lai) ----------------------------
             v_res := NULL;
             IF v_kind <> 6 THEN
                 INSERT INTO reservation
@@ -270,7 +248,7 @@ BEGIN
 
             CONTINUE WHEN v_kind IN (7, 8);
 
-            -- ---- session ----------------------------------------------------------
+            -- ---- phiên sạc --------------------------------------------------------
             SELECT battery_capacity_kwh INTO v_battery
             FROM vehicle WHERE vehicle_identifier = v_vehicle;
 
@@ -281,7 +259,7 @@ BEGIN
             VALUES (v_res, v_vehicle, eq.equipment_identifier, v_start)
             RETURNING session_identifier INTO v_session;
 
-            -- energy needed ~ 30..80 % of the battery, limited by charger power
+            -- năng lượng cần ~ 30..80 % dung lượng pin, giới hạn bởi công suất trụ
             v_energy   := round(v_battery * (30 + (h / 7000) % 51) / 100.0, 2);
             v_peak     := round(eq.max_power_kw * (80 + (h / 11000) % 16) / 100.0, 2);
             v_charge_h := round(greatest(0.4,
@@ -289,11 +267,11 @@ BEGIN
             v_charge_h := least(v_charge_h, 5.0);
             v_energy   := round(least(v_energy, v_peak * 0.75 * v_charge_h), 2);
 
-            -- 70 % of sessions reach full charge; kind 9 stays plugged-in long
+            -- 70 % số phiên sạc đầy; loại 9 vẫn cắm sạc rất lâu sau đó
             IF v_kind = 9 THEN
-                v_idle_h := 1.0 + (h / 13000) % 8 / 4.0;      -- 1.0 .. 2.75 h
+                v_idle_h := 1.0 + (h / 13000) % 8 / 4.0;      -- 1.0 .. 2.75 giờ
             ELSE
-                v_idle_h := (h / 13000) % 4 * 0.05;           -- 0 .. 0.15 h
+                v_idle_h := (h / 13000) % 4 * 0.05;           -- 0 .. 0.15 giờ
             END IF;
 
             IF v_kind = 9 OR (h / 17000) % 10 < 7 THEN
@@ -317,44 +295,75 @@ BEGIN
 END $$;
 
 -- -----------------------------------------------------------------------------
--- 9. Payments: invoices were created PENDING by trg_session_finish.
---    Only status / method / gateway reference / created time are updated
---    (amounts are immutable by trg_payment_immutable).
+-- 9. Thanh toán: hóa đơn được trg_session_finish tạo ở trạng thái PENDING.
+--    Chỉ cập nhật trạng thái / phương thức / mã tham chiếu cổng / thời điểm tạo
+--    (số tiền không đổi được do trg_payment_immutable).
 -- -----------------------------------------------------------------------------
+-- Hoàn tiền phải đi qua SUCCESS trước (xem trg_payment_immutable), nên các
+-- dòng này được ghi SUCCESS rồi mới chuyển sang REFUNDED.
+CREATE TEMP TABLE t_refund (transaction_identifier UUID PRIMARY KEY) ON COMMIT DROP;
+INSERT INTO t_refund
+SELECT t.transaction_identifier
+FROM payment_transaction AS t
+JOIN service_session AS s ON s.session_identifier = t.session_identifier
+JOIN vehicle AS v ON v.vehicle_identifier = s.vehicle_identifier
+CROSS JOIN LATERAL (SELECT md5(v.license_plate_text || ':'
+        || extract(epoch FROM s.start_datetime)::TEXT) AS digest) AS d
+WHERE s.end_datetime <= TIMESTAMPTZ '2026-10-24 00:00:00+07'
+  AND ('x' || substr(d.digest, 6, 5))::BIT(20)::INT % 100 BETWEEN 4 AND 7;
+
+-- Trạng thái đích của từng hóa đơn (tất định theo md5).
+CREATE TEMP TABLE t_pay ON COMMIT DROP AS
+SELECT q.transaction_identifier, q.end_datetime, q.digest, q.facility_identifier,
+       (ARRAY['E_WALLET', 'CREDIT_CARD', 'E_WALLET', 'BANK_TRANSFER'])
+           [1 + ('x' || substr(q.digest, 1, 5))::BIT(20)::INT % 4] AS method,
+       CASE
+           WHEN q.end_datetime > TIMESTAMPTZ '2026-10-24 00:00:00+07'
+                THEN 'PENDING'
+           WHEN ('x' || substr(q.digest, 6, 5))::BIT(20)::INT % 100 < 4
+                THEN 'FAILED'
+           WHEN ('x' || substr(q.digest, 6, 5))::BIT(20)::INT % 100 < 8
+                THEN 'REFUNDED'
+           ELSE 'SUCCESS'
+       END AS status
+FROM (
+    SELECT t.transaction_identifier, s.end_datetime, sp.facility_identifier,
+           md5(v.license_plate_text || ':'
+               || extract(epoch FROM s.start_datetime)::TEXT) AS digest
+    FROM payment_transaction AS t
+    JOIN service_session AS s ON s.session_identifier = t.session_identifier
+    JOIN vehicle AS v ON v.vehicle_identifier = s.vehicle_identifier
+    JOIN charging_equipment AS ce ON ce.equipment_identifier = s.equipment_identifier
+    JOIN parking_space AS sp ON sp.space_identifier = ce.space_identifier
+) AS q;
+
+-- Bước 1: khách trả tiền -> PROCESSING (chờ quản lý bãi xác nhận).
 UPDATE payment_transaction AS p
 SET created_datetime = x.end_datetime + INTERVAL '1 minute',
-    transaction_status_code = x.status,
-    payment_method_code = CASE WHEN x.status IN ('SUCCESS', 'REFUNDED')
-                               THEN x.method END,
-    gateway_reference_identifier = CASE WHEN x.status IN ('SUCCESS', 'REFUNDED')
-                               THEN 'GW-' || upper(substr(x.digest, 1, 12)) END
-FROM (
-    SELECT q.transaction_identifier, q.end_datetime, q.digest,
-           (ARRAY['E_WALLET', 'CREDIT_CARD', 'E_WALLET', 'BANK_TRANSFER'])
-               [1 + ('x' || substr(q.digest, 1, 5))::BIT(20)::INT % 4] AS method,
-           CASE
-               WHEN q.end_datetime > TIMESTAMPTZ '2026-10-24 00:00:00+07'
-                    THEN 'PENDING'
-               WHEN ('x' || substr(q.digest, 6, 5))::BIT(20)::INT % 100 < 4
-                    THEN 'FAILED'
-               WHEN ('x' || substr(q.digest, 6, 5))::BIT(20)::INT % 100 < 8
-                    THEN 'REFUNDED'
-               ELSE 'SUCCESS'
-           END AS status
-    FROM (
-        SELECT t.transaction_identifier, s.end_datetime,
-               md5(v.license_plate_text || ':'
-                   || extract(epoch FROM s.start_datetime)::TEXT) AS digest
-        FROM payment_transaction AS t
-        JOIN service_session AS s ON s.session_identifier = t.session_identifier
-        JOIN vehicle AS v ON v.vehicle_identifier = s.vehicle_identifier
-    ) AS q
-) AS x
+    transaction_status_code = CASE WHEN x.status = 'PENDING' THEN 'PENDING' ELSE 'PROCESSING' END,
+    payment_method_code = CASE WHEN x.status <> 'PENDING' THEN x.method END,
+    gateway_reference_identifier = CASE WHEN x.status <> 'PENDING'
+                                        THEN 'GW-' || upper(substr(x.digest, 1, 12)) END
+FROM t_pay AS x
 WHERE p.transaction_identifier = x.transaction_identifier;
 
+-- Bước 2: quản lý của bãi nơi khách sạc xác nhận (SUCCESS) hoặc từ chối (FAILED)
+-- sau 15 phút. Hóa đơn sẽ hoàn tiền được xác nhận SUCCESS trước.
+UPDATE payment_transaction AS p
+SET transaction_status_code = CASE WHEN x.status = 'FAILED' THEN 'FAILED' ELSE 'SUCCESS' END,
+    confirmed_by_identifier = (SELECT min(fm.manager_identifier::TEXT)::UUID
+                               FROM facility_manager AS fm
+                               WHERE fm.facility_identifier = x.facility_identifier),
+    confirmed_datetime = x.end_datetime + INTERVAL '15 minutes'
+FROM t_pay AS x
+WHERE p.transaction_identifier = x.transaction_identifier AND x.status <> 'PENDING';
+
+UPDATE payment_transaction SET transaction_status_code = 'REFUNDED'
+WHERE transaction_identifier IN (SELECT transaction_identifier FROM t_refund);
+
 -- -----------------------------------------------------------------------------
--- 10. Current state (relative to now()): open sessions, upcoming bookings,
---     one overdue PENDING booking, faulty / maintenance chargers
+-- 10. Trạng thái hiện tại (tính theo now()): phiên đang mở, lượt đặt sắp tới,
+--     một lượt PENDING quá hạn, trụ sạc hỏng / đang bảo trì
 -- -----------------------------------------------------------------------------
 DO $$
 DECLARE
@@ -366,7 +375,7 @@ BEGIN
       INTO v_vehicles
     FROM vehicle;
 
-    -- 7 walk-in sessions currently running (chargers 3,9,15,21,27,33,39 by evse order)
+    -- 7 phiên vãng lai đang chạy (trụ 3,9,15,21,27,33,39 theo thứ tự evse)
     FOR eq IN
         SELECT row_number() OVER (ORDER BY evse_identifier) AS ei,
                equipment_identifier, space_identifier, max_power_kw
@@ -382,7 +391,7 @@ BEGIN
                  now() - (15 + k * 12) * INTERVAL '1 minute',
                  round(eq.max_power_kw * 0.85, 2), 0);
 
-            -- the next customer already booked this space shortly after
+            -- khách tiếp theo đã đặt chính ô này ngay sau đó
             IF k <= 3 THEN
                 INSERT INTO reservation
                     (vehicle_identifier, space_identifier, start_datetime,
@@ -396,7 +405,7 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- upcoming CONFIRMED bookings on charger spaces that are not in use
+    -- các lượt CONFIRMED sắp tới trên ô có trụ sạc đang không sử dụng
     FOR eq IN
         SELECT row_number() OVER (ORDER BY evse_identifier) AS ei, space_identifier
         FROM charging_equipment ORDER BY evse_identifier
@@ -414,7 +423,7 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- one PENDING booking already 45 minutes late (will be EXPIRED by the job)
+    -- một lượt PENDING đã trễ 45 phút (sẽ được tác vụ chuyển sang EXPIRED)
     INSERT INTO reservation
         (vehicle_identifier, space_identifier, start_datetime, end_datetime,
          reservation_status_code, created_datetime)
@@ -427,7 +436,7 @@ BEGIN
     ORDER BY f.facility_name_text
     LIMIT 1;
 
-    -- parking-only bookings on spaces without a charger (A-10)
+    -- lượt đặt chỉ đỗ xe trên các ô không có trụ sạc (A-10)
     INSERT INTO reservation
         (vehicle_identifier, space_identifier, start_datetime, end_datetime,
          reservation_status_code, created_datetime)
@@ -440,13 +449,13 @@ BEGIN
     JOIN (SELECT generate_series(1, 5) AS rn) AS n ON n.rn = s.rn;
 END $$;
 
--- chargers out of order (trg_equipment_status_sync marks their spaces OUTOFSERVICE)
+-- trụ sạc hỏng (trg_equipment_status_sync đánh dấu ô tương ứng OUTOFSERVICE)
 UPDATE charging_equipment SET equipment_status_code = 'FAULT'
 WHERE evse_identifier = 'VN*EVH*3*A04';
 UPDATE charging_equipment SET equipment_status_code = 'MAINTENANCE'
 WHERE evse_identifier IN ('VN*EVH*5*A08', 'VN*EVH*2*A06');
 
--- one customer account and one of their vehicles are soft-deleted (history kept)
+-- một tài khoản khách và một xe của họ bị xóa mềm (vẫn giữ lịch sử)
 UPDATE vehicle SET deleted_datetime = TIMESTAMPTZ '2026-10-20 09:00:00+07'
 WHERE vehicle_identifier = (SELECT vehicle_identifier FROM vehicle
                             ORDER BY license_plate_text LIMIT 1 OFFSET 30)
@@ -454,12 +463,12 @@ WHERE vehicle_identifier = (SELECT vehicle_identifier FROM vehicle
                   WHERE s.vehicle_identifier = vehicle.vehicle_identifier
                     AND s.end_datetime IS NULL);
 
--- refresh RESERVED flags from the reservation table
+-- làm mới cờ RESERVED từ bảng reservation
 SELECT fn_refresh_reserved_spaces();
 
 COMMIT;
 
--- Summary of what was loaded
+-- Tóm tắt dữ liệu đã nạp
 SELECT 'user_account' AS table_name, count(*) AS row_count FROM user_account
 UNION ALL SELECT 'vehicle', count(*) FROM vehicle
 UNION ALL SELECT 'parking_facility', count(*) FROM parking_facility

@@ -25,7 +25,7 @@ Tên bảng và cột dùng `lowercase snake_case`. Mỗi cột kết thúc bằ
 | `_value` | Giá trị số / tiền tệ | `price_per_kwh_value` |
 | `_number`, `_location` | Số điện thoại, tọa độ | `contact_phone_number` |
 
-Các hậu tố `_amount` ở bản cũ được thống nhất thành `_value`. Các cột đổi tên so với bản trước: `deleted_at → deleted_datetime`, `license_plate → license_plate_text`, `gateway_reference_id → gateway_reference_identifier`.
+Các hậu tố `_amount` ở bản cũ được thống nhất thành `_value`. Các cột đổi tên so với thiết kế trước: `deleted_at → deleted_datetime`, `license_plate → license_plate_text`, `gateway_reference_id → gateway_reference_identifier`.
 
 **Ký hiệu Key Type:** PK, FK, UK. `UK*` = ràng buộc duy nhất **từng phần** (`WHERE deleted_datetime IS NULL`), để bản ghi đã xóa mềm không chiếm khóa.
 
@@ -36,13 +36,15 @@ Các hậu tố `_amount` ở bản cũ được thống nhất thành `_value`.
 | Attribute Name | Data Type | Key Type | Nullable? | Default Value | Business Rules / Constraints |
 |---|---|---|---|---|---|
 | `account_identifier` | UUID | PK | No | `gen_random_uuid()` | Mã định danh tài khoản. |
-| `full_name_text` | VARCHAR(100) | None | No | None | Họ và tên. |
+| `full_name_text` | VARCHAR(100) | None | No | None | Họ và tên; không được chỉ gồm dấu cách (`ck_user_account_name`). |
 | `contact_phone_number` | VARCHAR(15) | UK* | No | None | CHECK `~ '^\+?[0-9]{8,14}$'`; duy nhất trong các tài khoản chưa xóa. |
-| `email_address` | VARCHAR(255) | UK* | No | None | Duy nhất không phân biệt hoa/thường (`lower(email_address)`). |
-| `password_hash_text` | VARCHAR(255) | None | No | None | Mật khẩu đã băm (scrypt, `werkzeug.security`); không lưu mật khẩu thô. |
+| `email_address` | VARCHAR(255) | UK* | No | None | Duy nhất không phân biệt hoa/thường (`lower(email_address)`); kiểm tra định dạng (`ck_user_account_email`). |
+| `password_hash_text` | VARCHAR(255) | None | No | None | Mật khẩu đã băm (scrypt, `werkzeug.security`); dùng để đăng nhập. |
 | `role_code` | VARCHAR(20) | None | No | `'CUSTOMER'` | CHECK: `CUSTOMER`, `MANAGER`, `ADMIN`. |
 | `created_datetime` | TIMESTAMPTZ | None | No | `CURRENT_TIMESTAMP` | Thời điểm tạo tài khoản. |
 | `deleted_datetime` | TIMESTAMPTZ | None | Yes | `NULL` | Xóa mềm. |
+| `password_plain_text` | VARCHAR(255) | None | Yes | `NULL` | Mật khẩu gốc để ADMIN xem (yêu cầu của đồ án). Ghi khi đăng ký, khi admin tạo hoặc đặt lại, và ở lần đăng nhập đầu nếu còn trống; bị xóa khi xóa vĩnh viễn. |
+| `purged_datetime` | TIMESTAMPTZ | None | Yes | `NULL` | Đã xóa vĩnh viễn thông tin cá nhân (quá 30 phút sau khi xóa mềm). |
 
 ## 2. VEHICLE
 
@@ -132,7 +134,9 @@ Mỗi dòng là một **ô giá** theo (loại cổng, khung giờ, dải công 
 | `deleted_datetime` | TIMESTAMPTZ | None | Yes | `NULL` | Xóa mềm. |
 | `ex_reservation_no_overlap` | EXCLUDE | None | — | None | `EXCLUDE USING gist (space_identifier WITH =, tstzrange(start_datetime, end_datetime) WITH &&) WHERE (reservation_status_code IN ('PENDING','CONFIRMED','FULFILLED') AND deleted_datetime IS NULL)`. Lượt `CANCELLED`/`EXPIRED`/đã xóa **không** chiếm khung giờ. Yêu cầu extension `btree_gist`. |
 
-Trigger `trg_reservation_validate` (khi INSERT): từ chối nếu ô đỗ đã xóa hoặc `OUTOFSERVICE`, hoặc xe đã xóa.
+Trigger `trg_reservation_validate` (khi INSERT): từ chối nếu ô đỗ đã xóa hoặc `OUTOFSERVICE`, xe hoặc chủ xe đã xóa, hoặc ô đang sạc và lượt đặt bắt đầu trong 30 phút tới.
+
+Ràng buộc bổ sung: `ex_reservation_vehicle_no_overlap` (một xe không giữ hai ô chồng giờ); `ck_reservation_duration` (tối đa 24 giờ); `trg_reservation_fixed` (không sửa xe, ô, giờ); `trg_reservation_status_flow` (trạng thái một chiều; không xác nhận lượt quá hạn; ô có trụ chỉ thành `FULFILLED` qua phiên sạc; ô chỉ đỗ xe được ghi nhận đến từ sớm 15 phút đến trễ 30 phút).
 
 ## 9. SERVICE_SESSION
 
@@ -147,10 +151,13 @@ Chủ tài khoản của phiên suy ra qua `vehicle.account_identifier` (không 
 | `start_datetime` | TIMESTAMPTZ | None | No | `CURRENT_TIMESTAMP` | Thời điểm cắm sạc thực tế. |
 | `end_datetime` | TIMESTAMPTZ | None | Yes | `NULL` | CHECK `>= start_datetime`. Khi chuyển từ NULL sang có giá trị, trigger `trg_session_finish` giải phóng thiết bị và **tự lập hóa đơn**. |
 | `fully_charged_datetime` | TIMESTAMPTZ | None | Yes | `NULL` | CHECK `>= start_datetime` và `<= end_datetime` (nếu có). |
-| `peak_charging_power_kw` | DECIMAL(10,2) | None | No | `0.00` | CHECK `>= 0`. |
-| `consumed_energy_kwh` | DECIMAL(10,2) | None | No | `0.00` | CHECK `>= 0`. |
+| `peak_charging_power_kw` | DECIMAL(10,2) | None | No | `0.00` | CHECK `>= 0`. Khi kết thúc ghi bằng công suất trụ. |
+| `consumed_energy_kwh` | DECIMAL(10,2) | None | No | `0.00` | CHECK `>= 0`. Khi kết thúc lấy từ `fn_session_estimate`; không quá 110 % dung lượng pin và công suất trụ × (thời gian sạc + 5 phút). |
+| `applied_price_per_kwh_value` | DECIMAL(10,2) | None | Yes | `NULL` | Đơn giá điện chốt lúc bắt đầu phiên, trigger tự ghi; không sửa được. NULL nếu không có ô giá phù hợp. |
+| `applied_overtime_fee_per_hour_value` | DECIMAL(10,2) | None | Yes | `NULL` | Phí quá giờ chốt lúc bắt đầu phiên; không sửa được. |
+| `start_battery_percent` | DECIMAL(5,2) | None | Yes | `NULL` | % pin lúc cắm sạc do quản lý nhập; CHECK `0 <= x < 100`; không sửa được. NULL (phiên cũ) thì ước tính coi là 20 %. |
 
-Ràng buộc bổ sung: chỉ mục duy nhất từng phần `ux_service_session_open_equipment` (mỗi thiết bị tối đa một phiên đang mở); trigger `trg_session_validate` kiểm tra phiên khớp với lượt đặt (cùng xe, cùng ô), thiết bị không `FAULT`/`MAINTENANCE`, và khách vãng lai không được bắt đầu trong khung giờ đã được người khác đặt.
+Ràng buộc bổ sung: chỉ mục duy nhất từng phần `ux_service_session_open_equipment` (mỗi thiết bị tối đa một phiên đang mở); trigger `trg_session_validate` kiểm tra phiên khớp với lượt đặt (cùng xe, cùng ô), thiết bị không `FAULT`/`MAINTENANCE`, và khách vãng lai không được bắt đầu trong khung giờ đã được người khác đặt. Thêm: `ux_service_session_open_vehicle`; `trg_session_validate` còn chặn xe của tài khoản đã xóa, đến sớm quá 15 phút, dùng lượt đặt trễ quá 30 phút; `trg_session_energy_limit`; `trg_session_fixed` (không xóa phiên, không đổi xe, trụ, giờ bắt đầu, giá chốt); `trg_session_immutable` (phiên đã kết thúc chỉ đọc).
 
 ## 10. PAYMENT_TRANSACTION
 
@@ -159,18 +166,39 @@ Ràng buộc bổ sung: chỉ mục duy nhất từng phần `ux_service_session
 | `transaction_identifier` | UUID | PK | No | `gen_random_uuid()` | Mã định danh giao dịch. |
 | `session_identifier` | UUID | FK, UK | No | None | → `service_session`; `ON DELETE RESTRICT`; quan hệ 1:1. |
 | `rate_identifier` | UUID | FK | No | None | → `tariff_rate`; `ON DELETE RESTRICT`. Ô giá được áp dụng (chọn theo giờ bắt đầu phiên). |
-| `energy_amount_value` | DECIMAL(12,2) | None | No | None | `consumed_energy_kwh × price_per_kwh_value`. |
-| `overtime_amount_value` | DECIMAL(12,2) | None | No | `0.00` | `max(0, (end_datetime − fully_charged_datetime) tính bằng giờ) × overtime_fee_per_hour_value`. |
+| `energy_amount_value` | DECIMAL(12,2) | None | No | None | `consumed_energy_kwh × applied_price_per_kwh_value`. |
+| `overtime_amount_value` | DECIMAL(12,2) | None | No | `0.00` | `max(0, (end_datetime − fully_charged_datetime) tính bằng giờ) × applied_overtime_fee_per_hour_value`. |
 | `transaction_amount_value` | DECIMAL(12,2) | None | No | None | CHECK `= energy_amount_value + overtime_amount_value`. Số tiền **chốt** tại thời điểm xuất hóa đơn. |
 | `currency_code` | CHAR(3) | None | No | `'VND'` | CHECK: `VND`, `USD` (ISO 4217). |
 | `payment_method_code` | VARCHAR(50) | None | Yes | `NULL` | CHECK: `CREDIT_CARD`, `E_WALLET`, `BANK_TRANSFER`. NULL cho tới khi khách chọn cách thanh toán. |
 | `gateway_reference_identifier` | VARCHAR(100) | None | Yes | `NULL` | Mã đối soát từ cổng (MoMo, VNPay, Stripe). NULL khi giao dịch còn `PENDING`. |
-| `transaction_status_code` | VARCHAR(20) | None | No | `'PENDING'` | CHECK: `PENDING`, `SUCCESS`, `FAILED`, `REFUNDED`. `SUCCESS` yêu cầu đã có `payment_method_code` và `gateway_reference_identifier`. |
+| `transaction_status_code` | VARCHAR(20) | None | No | `'PENDING'` | CHECK: `PENDING`, `PROCESSING` (khách đã trả, chờ quản lý xác nhận), `SUCCESS`, `FAILED`, `REFUNDED`. `PROCESSING` và `SUCCESS` yêu cầu đã có `payment_method_code` và `gateway_reference_identifier`. |
 | `created_datetime` | TIMESTAMPTZ | None | No | `CURRENT_TIMESTAMP` | Thời điểm tạo. |
+| `customer_name_text` | VARCHAR(100) | None | No | trigger ghi | Họ tên khách lúc lập hóa đơn. `trg_payment_snapshot` tự chụp, không sửa được, còn nguyên khi tài khoản bị xóa. |
+| `customer_phone_number` | VARCHAR(15) | None | No | trigger ghi | Số điện thoại lúc lập hóa đơn. `trg_payment_snapshot` tự chụp, không sửa được, còn nguyên khi tài khoản bị xóa. |
+| `customer_email_address` | VARCHAR(255) | None | No | trigger ghi | Email lúc lập hóa đơn. `trg_payment_snapshot` tự chụp, không sửa được, còn nguyên khi tài khoản bị xóa. |
+| `confirmed_by_identifier` | UUID | FK | Yes | `NULL` | → `user_account`; `ON DELETE RESTRICT`. Quản lý xác nhận hoặc từ chối; phải là MANAGER chưa xóa đang phụ trách bãi nơi khách sạc (`ck_payment_confirmed_by_manager`). Bắt buộc khi trạng thái là `SUCCESS`, `FAILED`, `REFUNDED` (`ck_payment_confirmed`). |
+| `confirmed_datetime` | TIMESTAMPTZ | None | Yes | `NULL` | Thời điểm quản lý xác nhận hoặc từ chối (trigger ghi `now()`). |
+| `license_plate_text` | VARCHAR(20) | None | No | trigger ghi | Biển số lúc lập hóa đơn. `trg_payment_snapshot` tự chụp, không sửa được, còn nguyên khi tài khoản bị xóa. |
 
-Bất biến: trigger `trg_payment_immutable` cấm `DELETE` và cấm sửa session, rate, các số tiền, tiền tệ; chỉ cho cập nhật trạng thái, phương thức và mã cổng.
+Bất biến: trigger `trg_payment_immutable` cấm `DELETE` và cấm sửa session, rate, các số tiền, tiền tệ và thông tin khách trên hóa đơn; chỉ cho cập nhật trạng thái, phương thức và mã cổng. `trg_payment_requires_end` chỉ cho lập hóa đơn cho phiên đã kết thúc.
 
 ---
+
+## Quy tắc toàn vẹn liên bảng
+
+| Trigger | Quy tắc |
+|---|---|
+| `trg_account_guard` | Khách đã có xe, quản lý đang được phân công không đổi được vai trò; không xóa được ADMIN; xóa mềm thì hủy lượt đặt sắp tới, bỏ phân công, xóa mềm xe; khôi phục được trong 30 phút (`ck_account_restore_expired`), không khôi phục tài khoản đã xóa vĩnh viễn. |
+| `trg_admin_keep` | Không `DELETE` được tài khoản ADMIN. |
+| `trg_payment_snapshot` | Chụp họ tên, điện thoại, email, biển số vào hóa đơn lúc lập. |
+| `fn_session_estimate` (hàm) | Điện năng, thời điểm đầy pin, % pin và công suất của một phiên tại thời điểm cho trước: công suất trụ × thời gian × 90 %, tối đa phần pin còn thiếu. |
+| `fn_purge_deleted_accounts` (hàm) | Quá 30 phút: tài khoản chưa có lịch sử thì xóa hẳn; có lịch sử thì xóa thông tin cá nhân, giữ phiên sạc và hóa đơn; đang sạc thì chờ phiên kết thúc. |
+| `trg_space_removal` | Không xóa mềm ô đang sạc; xóa mềm ô thì hủy lượt đặt sắp tới. |
+| `trg_equipment_charging_guard` | Trạng thái `CHARGING` phải khớp với phiên đang mở. |
+| `trg_facility_capacity` | Không giảm sức chứa xuống dưới số ô đang có. |
+
+Tài khoản CSDL cho web: `roles.sql` tạo `evc_app` với quyền tối thiểu.
 
 ## 11. Ghi chú thiết kế về dữ liệu có kiểm soát dư thừa
 
