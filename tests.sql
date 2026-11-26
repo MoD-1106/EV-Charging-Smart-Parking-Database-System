@@ -55,26 +55,70 @@ INSERT INTO charging_equipment (equipment_identifier, space_identifier, evse_ide
  ('00000000-0000-0000-0000-0000000000e1','00000000-0000-0000-0000-0000000000d1','VN*EVSE*E00001','FAST_DC',120),
  ('00000000-0000-0000-0000-0000000000e2','00000000-0000-0000-0000-0000000000d2','VN*EVSE*E00002','STANDARD_AC',22);
 
--- Biểu giá: PEAK 17-20, OFF_PEAK 22-05 (tách tại nửa đêm), còn lại là STANDARD
-INSERT INTO tariff_rate (connector_type_code, time_band_code, start_time, end_time,
-                         min_power_kw, max_power_kw, price_per_kwh_value, overtime_fee_per_hour_value)
-SELECT c.code, b.band, b.s::TIME, b.e::TIME, 0, 1000,
-       CASE c.code WHEN 'FAST_DC' THEN b.fast ELSE b.ac END, b.ot
+-- Biểu giá: khung giờ khai báo một lần (time_band, time_band_window),
+-- giá theo (loại cổng, dải công suất, khung). PEAK 17-20, OFF_PEAK 22-05, còn lại STANDARD
+INSERT INTO time_band (time_band_code, time_band_name) VALUES
+ ('OFF_PEAK','Thấp điểm'), ('STANDARD','Bình thường'), ('PEAK','Cao điểm');
+INSERT INTO time_band_window (start_time, end_time, time_band_code) VALUES
+ ('00:00','05:00','OFF_PEAK'), ('05:00','17:00','STANDARD'), ('17:00','20:00','PEAK'),
+ ('20:00','22:00','STANDARD'), ('22:00','24:00','OFF_PEAK');
+INSERT INTO power_tier (connector_type_code, min_power_kw, max_power_kw) VALUES
+ ('FAST_DC', 0, 1000), ('STANDARD_AC', 0, 1000);
+INSERT INTO tariff_rate (connector_type_code, min_power_kw, time_band_code,
+                         price_per_kwh_value, overtime_fee_per_hour_value, effective_from)
+SELECT c.code, 0, b.band, CASE c.code WHEN 'FAST_DC' THEN b.fast ELSE b.ac END, b.ot, '2000-01-01'
 FROM (VALUES ('FAST_DC'), ('STANDARD_AC')) AS c(code)
-CROSS JOIN (VALUES
-    ('OFF_PEAK','00:00','05:00', 2500, 1500, 30000),
-    ('STANDARD','05:00','17:00', 3200, 2000, 45000),
-    ('PEAK',    '17:00','20:00', 4000, 2600, 60000),
-    ('STANDARD','20:00','22:00', 3200, 2000, 45000),
-    ('OFF_PEAK','22:00','24:00', 2500, 1500, 30000)
-) AS b(band, s, e, fast, ac, ot);
+CROSS JOIN (VALUES ('OFF_PEAK', 2500, 1500, 30000), ('STANDARD', 3200, 2000, 45000),
+                   ('PEAK', 4000, 2600, 60000)) AS b(band, fast, ac, ot);
+INSERT INTO parking_rate (time_band_code, price_per_hour_value, effective_from) VALUES
+ ('OFF_PEAK', 10000, '2000-01-01'), ('STANDARD', 15000, '2000-01-01'), ('PEAK', 20000, '2000-01-01');
 
 -- ---- ràng buộc ----------------------------------------------------------------
-SELECT pg_temp.expect_true((SELECT count(*) FROM tariff_rate) = 10, 'tariff seed: 24h fully covered per connector (5 bands x 2)');
-
-SELECT pg_temp.expect_error($$INSERT INTO tariff_rate (connector_type_code,time_band_code,start_time,end_time,
-    min_power_kw,max_power_kw,price_per_kwh_value) VALUES ('FAST_DC','PEAK','18:00','19:00',0,50,1)$$,
-    '23P01','tariff overlap (time AND power) rejected');
+SELECT pg_temp.expect_true((SELECT sum(extract(epoch FROM end_time - start_time)) FROM time_band_window) = 86400,
+    'time band windows cover 24 hours exactly once');
+SELECT pg_temp.expect_true((SELECT count(*) FROM tariff_rate) = 6, 'one price per connector and band (2 x 3)');
+SELECT pg_temp.expect_error($$INSERT INTO time_band_window VALUES ('18:00','23:00','PEAK')$$,
+    '23P01','overlapping time band windows rejected');
+SELECT pg_temp.expect_error($$INSERT INTO time_band_window VALUES ('23:00','21:00','PEAK')$$,
+    '23514','time band window must end after it starts');
+SELECT pg_temp.expect_error($$INSERT INTO time_band VALUES ('NIGHT','Đêm')$$,
+    '23514','unknown time band code rejected');
+SELECT pg_temp.expect_error($$UPDATE time_band_window SET time_band_code='NIGHT' WHERE start_time='17:00'$$,
+    '23503','time band window must reference a time band');
+SELECT pg_temp.expect_error($$DELETE FROM time_band WHERE time_band_code='PEAK'$$,
+    '23503','time band in use cannot be deleted');
+SELECT pg_temp.expect_error($$INSERT INTO power_tier VALUES ('FAST_DC',500,2000)$$,
+    '23P01','power tiers of one connector type cannot overlap');
+SELECT pg_temp.expect_error($$INSERT INTO power_tier VALUES ('CHADEMO',0,10)$$,
+    '23514','unknown connector type rejected');
+SELECT pg_temp.expect_error($$INSERT INTO tariff_rate (connector_type_code,min_power_kw,time_band_code,
+    price_per_kwh_value,effective_from) VALUES ('FAST_DC',0,'PEAK',1,'2026-06-01')$$,
+    '23P01','two price versions of one cell cannot overlap in time');
+SELECT pg_temp.expect_error($$INSERT INTO tariff_rate (connector_type_code,min_power_kw,time_band_code,
+    price_per_kwh_value,effective_from) VALUES ('FAST_DC',0,'NIGHT',1,'2026-06-01')$$,
+    '23503','tariff must reference a time band');
+SELECT pg_temp.expect_error($$INSERT INTO tariff_rate (connector_type_code,min_power_kw,time_band_code,
+    price_per_kwh_value,effective_from) VALUES ('FAST_DC',5,'PEAK',1,'2026-06-01')$$,
+    '23503','tariff must reference a power tier');
+SELECT pg_temp.expect_error($$INSERT INTO tariff_rate (connector_type_code,min_power_kw,time_band_code,
+    price_per_kwh_value,effective_from,effective_to) VALUES ('FAST_DC',0,'PEAK',1,'2026-06-01','2026-05-01')$$,
+    '23514','a price version must end after it starts');
+SELECT pg_temp.expect_error($$UPDATE tariff_rate SET price_per_kwh_value = 1$$,
+    '23001','a price version is never edited in place');
+SELECT pg_temp.expect_error($$INSERT INTO parking_rate (time_band_code,price_per_hour_value,effective_from)
+    VALUES ('PEAK',1,'2026-06-01')$$,'23P01','two parking price versions of one band cannot overlap');
+SELECT pg_temp.expect_true(NOT EXISTS (
+    SELECT 1 FROM pg_constraint AS c
+    WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace
+      AND NOT EXISTS (SELECT 1 FROM pg_index AS i
+                      WHERE i.indrelid = c.conrelid AND i.indpred IS NULL
+                        AND i.indkey[0] = c.conkey[1])),
+    'every foreign key has a full index on its leading column');
+-- lịch khung giờ phải phủ kín 24 giờ (kiểm tra khi kết thúc giao dịch)
+SET CONSTRAINTS trg_time_band_window_coverage IMMEDIATE;
+SELECT pg_temp.expect_error($$DELETE FROM time_band_window WHERE start_time='20:00'$$,
+    '23514','a gap in the time band schedule is rejected');
+SET CONSTRAINTS trg_time_band_window_coverage DEFERRED;
 
 SELECT pg_temp.expect_error($$INSERT INTO user_account (full_name_text,contact_phone_number,email_address,password_hash_text)
     VALUES ('dup','+84901000009','A@X.VN','h')$$,'23505','email unique, case-insensitive');
@@ -211,8 +255,10 @@ SELECT ('00000000-0000-0000-0000-0000000009d' || n)::uuid, '00000000-0000-0000-0
 INSERT INTO charging_equipment (equipment_identifier, space_identifier, evse_identifier, connector_type_code, max_power_kw)
 SELECT ('00000000-0000-0000-0000-0000000009e' || n)::uuid, ('00000000-0000-0000-0000-0000000009d' || n)::uuid, 'VN*TEST*' || n, 'FAST_DC', 60 FROM generate_series(1,4) n;
 
-SELECT pg_temp.expect_error($$UPDATE tariff_rate SET price_per_kwh_value='NaN'$$,'23514','price NaN rejected');
-SELECT pg_temp.expect_error($$UPDATE tariff_rate SET overtime_fee_per_hour_value='NaN'$$,'23514','overtime NaN rejected');
+SELECT pg_temp.expect_error($$INSERT INTO tariff_rate (connector_type_code,min_power_kw,time_band_code,price_per_kwh_value,effective_from,effective_to)
+ VALUES ('FAST_DC',0,'PEAK','NaN','1980-01-01','1980-02-01')$$,'23514','price NaN rejected');
+SELECT pg_temp.expect_error($$INSERT INTO tariff_rate (connector_type_code,min_power_kw,time_band_code,price_per_kwh_value,overtime_fee_per_hour_value,effective_from,effective_to)
+ VALUES ('FAST_DC',0,'PEAK',1,'NaN','1980-01-01','1980-02-01')$$,'23514','overtime NaN rejected');
 SELECT pg_temp.expect_error($$UPDATE parking_facility SET total_capacity_count=3 WHERE facility_identifier='00000000-0000-0000-0000-0000000009c1'$$,'23514','capacity cannot drop below existing spaces');
 
 INSERT INTO reservation (reservation_identifier, vehicle_identifier, space_identifier, start_datetime, end_datetime, reservation_status_code) VALUES
@@ -294,19 +340,30 @@ SELECT pg_temp.expect_error($$UPDATE service_session SET consumed_energy_kwh=60,
 SELECT pg_temp.expect_error($$UPDATE service_session SET consumed_energy_kwh=30, end_datetime=now() WHERE session_identifier='00000000-0000-0000-0000-000000000a52'$$,'23514','energy cannot exceed charger power x time');
 SELECT pg_temp.expect_error($$UPDATE service_session SET vehicle_identifier='00000000-0000-0000-0000-000000000ab6' WHERE session_identifier='00000000-0000-0000-0000-000000000a51'$$,'23001','open session keeps its vehicle');
 SELECT pg_temp.expect_error($$UPDATE service_session SET start_datetime=now()-INTERVAL '9 hours' WHERE session_identifier='00000000-0000-0000-0000-000000000a51'$$,'23001','open session start cannot be moved');
-SELECT pg_temp.expect_error($$UPDATE service_session SET applied_price_per_kwh_value=1 WHERE session_identifier='00000000-0000-0000-0000-000000000a51'$$,'23001','locked price cannot be edited');
+SELECT pg_temp.expect_error($$UPDATE service_session SET rate_identifier=NULL WHERE session_identifier='00000000-0000-0000-0000-000000000a51'$$,'23001','locked price version cannot be changed');
 SELECT pg_temp.expect_error($$DELETE FROM service_session WHERE session_identifier='00000000-0000-0000-0000-000000000a51'$$,'23001','open session cannot be deleted');
 SELECT pg_temp.expect_error($$UPDATE charging_equipment SET equipment_status_code='READY' WHERE equipment_identifier='00000000-0000-0000-0000-000000000ae1'$$,'23514','charger stays CHARGING while a session is open');
 SELECT pg_temp.expect_error($$UPDATE charging_equipment SET equipment_status_code='CHARGING' WHERE equipment_identifier='00000000-0000-0000-0000-000000000ae6'$$,'23514','charger cannot be CHARGING without a session');
-SELECT pg_temp.expect_error($$INSERT INTO payment_transaction (session_identifier,rate_identifier,energy_amount_value,transaction_amount_value)
- SELECT '00000000-0000-0000-0000-000000000a51', rate_identifier, 1, 1 FROM tariff_rate LIMIT 1$$,'23514','no invoice for an open session');
+SELECT pg_temp.expect_error($$INSERT INTO payment_transaction (session_identifier,energy_amount_value,transaction_amount_value)
+ VALUES ('00000000-0000-0000-0000-000000000a51', 1, 1)$$,'23514','no invoice for an open session');
 
 -- giá chốt lúc bắt đầu sạc
-CREATE TEMP TABLE t_price AS SELECT applied_price_per_kwh_value AS p FROM service_session WHERE session_identifier='00000000-0000-0000-0000-000000000a51';
-UPDATE tariff_rate SET price_per_kwh_value = price_per_kwh_value * 10;
+CREATE TEMP TABLE t_price AS SELECT t.price_per_kwh_value AS p, t.rate_identifier AS r
+ FROM service_session AS ss JOIN tariff_rate AS t USING (rate_identifier)
+ WHERE ss.session_identifier='00000000-0000-0000-0000-000000000a51';
+-- đổi giá = đóng phiên bản cũ, thêm phiên bản mới (lịch sử giá được giữ)
+SELECT fn_change_tariff(rate_identifier, price_per_kwh_value * 10, overtime_fee_per_hour_value)
+FROM tariff_rate WHERE effective_to IS NULL AND connector_type_code = 'STANDARD_AC';
+SELECT pg_temp.expect_true((SELECT count(*) = 2 AND count(effective_to) = 1 FROM tariff_rate AS t, t_price
+   WHERE (t.connector_type_code, t.min_power_kw, t.time_band_code)
+       = (SELECT connector_type_code, min_power_kw, time_band_code FROM tariff_rate WHERE rate_identifier = t_price.r)),
+   'a price change keeps the old version and adds a new one');
+SELECT pg_temp.expect_true(fn_select_tariff('00000000-0000-0000-0000-000000000ae1', now() - INTERVAL '3 hours') = (SELECT r FROM t_price)
+   AND fn_select_tariff('00000000-0000-0000-0000-000000000ae1', clock_timestamp() + INTERVAL '1 second') <> (SELECT r FROM t_price),
+   'tariff lookup returns the version valid at the given time');
+SELECT pg_temp.expect_error($$SELECT fn_change_tariff((SELECT r FROM t_price), 1, 1)$$,'23001','a closed price version cannot be changed again');
 UPDATE service_session SET consumed_energy_kwh=10, end_datetime=now() WHERE session_identifier='00000000-0000-0000-0000-000000000a51';
 SELECT pg_temp.expect_true((SELECT energy_amount_value FROM payment_transaction WHERE session_identifier='00000000-0000-0000-0000-000000000a51') = (SELECT 10*p FROM t_price), 'price change mid-session does not affect the bill');
-UPDATE tariff_rate SET price_per_kwh_value = price_per_kwh_value / 10;
 
 -- vai trò và xóa mềm tài khoản
 SELECT pg_temp.expect_error($$UPDATE user_account SET role_code='ADMIN' WHERE account_identifier='00000000-0000-0000-0000-000000000aa1'$$,'23514','customer with vehicles keeps the role');
@@ -338,14 +395,32 @@ SELECT pg_temp.expect_error($$UPDATE reservation SET reservation_status_code='CO
 INSERT INTO service_session (vehicle_identifier, equipment_identifier) VALUES ('00000000-0000-0000-0000-000000000ab5','00000000-0000-0000-0000-000000000ae4');
 SELECT pg_temp.expect_true(true,'overdue booking no longer blocks a walk-in');
 
--- ô chỉ đỗ xe: ghi nhận khách đến
+-- ô chỉ đỗ xe: khách đến thì mở phiên đỗ xe, khách đi thì tính tiền theo giờ
 INSERT INTO reservation (reservation_identifier, vehicle_identifier, space_identifier, start_datetime, end_datetime, reservation_status_code) VALUES
  ('00000000-0000-0000-0000-000000000af7','00000000-0000-0000-0000-000000000ab6','00000000-0000-0000-0000-000000000ad7', now()-INTERVAL '5 minutes', now()+INTERVAL '1 hour','CONFIRMED'),
  ('00000000-0000-0000-0000-000000000af8','00000000-0000-0000-0000-000000000ab6','00000000-0000-0000-0000-000000000ad8', now()+INTERVAL '2 days', now()+INTERVAL '2 days 1 hour','CONFIRMED');
-SELECT pg_temp.expect_error($$UPDATE reservation SET reservation_status_code='FULFILLED' WHERE reservation_identifier='00000000-0000-0000-0000-000000000af8'$$,'23514','cannot check in days early');
-SELECT pg_temp.expect_error($$UPDATE reservation SET reservation_status_code='FULFILLED' WHERE reservation_identifier='00000000-0000-0000-0000-000000000af1'$$,'23514','charging space is checked in by starting a session');
-UPDATE reservation SET reservation_status_code='FULFILLED' WHERE reservation_identifier='00000000-0000-0000-0000-000000000af7';
-SELECT pg_temp.expect_true((SELECT availability_status_code='RESERVED' FROM parking_space WHERE space_identifier='00000000-0000-0000-0000-000000000ad7'),'parking-only space stays held after check-in');
+SELECT pg_temp.expect_error($$INSERT INTO service_session (reservation_identifier,vehicle_identifier,space_identifier)
+ VALUES ('00000000-0000-0000-0000-000000000af8','00000000-0000-0000-0000-000000000ab6','00000000-0000-0000-0000-000000000ad8')$$,'23514','cannot check in days early');
+SELECT pg_temp.expect_error($$UPDATE reservation SET reservation_status_code='FULFILLED' WHERE reservation_identifier='00000000-0000-0000-0000-000000000af7'$$,'23514','a booking is used only by opening a session');
+SELECT pg_temp.expect_error($$INSERT INTO service_session (vehicle_identifier,space_identifier)
+ VALUES ('00000000-0000-0000-0000-000000000ab6','00000000-0000-0000-0000-000000000ad5')$$,'23514','a charging space is used through its charger');
+SELECT pg_temp.expect_error($$INSERT INTO service_session (vehicle_identifier,equipment_identifier,space_identifier)
+ VALUES ('00000000-0000-0000-0000-000000000ab6','00000000-0000-0000-0000-000000000ae5','00000000-0000-0000-0000-000000000ad7')$$,'23514','a session uses a charger or a parking-only space, not both');
+INSERT INTO service_session (session_identifier, reservation_identifier, vehicle_identifier, space_identifier) VALUES
+ ('00000000-0000-0000-0000-000000000a57','00000000-0000-0000-0000-000000000af7','00000000-0000-0000-0000-000000000ab6','00000000-0000-0000-0000-000000000ad7');
+SELECT pg_temp.expect_true((SELECT r.reservation_status_code='FULFILLED' AND s.availability_status_code='OCCUPIED'
+   AND ss.parking_rate_identifier IS NOT NULL AND ss.rate_identifier IS NULL
+   FROM service_session AS ss JOIN reservation AS r USING (reservation_identifier)
+   JOIN parking_space AS s ON s.space_identifier = ss.space_identifier
+   WHERE ss.session_identifier='00000000-0000-0000-0000-000000000a57'),'parking session: booking used, space occupied, hourly price locked');
+SELECT pg_temp.expect_error($$UPDATE service_session SET consumed_energy_kwh=5 WHERE session_identifier='00000000-0000-0000-0000-000000000a57'$$,'23514','a parking session has no energy');
+UPDATE service_session SET end_datetime = start_datetime + INTERVAL '90 minutes' WHERE session_identifier='00000000-0000-0000-0000-000000000a57';
+SELECT pg_temp.expect_true((SELECT p.parking_amount_value = 1.5 * pr.price_per_hour_value AND p.energy_amount_value = 0
+     AND p.overtime_amount_value = 0 AND p.transaction_amount_value = p.parking_amount_value
+   FROM payment_transaction AS p JOIN service_session AS ss USING (session_identifier)
+   JOIN parking_rate AS pr ON pr.parking_rate_identifier = ss.parking_rate_identifier
+   WHERE p.session_identifier='00000000-0000-0000-0000-000000000a57'),'parking is billed per hour: 1.5 h x hourly price');
+SELECT pg_temp.expect_true((SELECT availability_status_code='AVAILABLE' FROM parking_space WHERE space_identifier='00000000-0000-0000-0000-000000000ad7'),'parking-only space is released when the car leaves');
 
 -- xóa mềm ô đỗ
 SELECT pg_temp.expect_error($$UPDATE parking_space SET deleted_datetime=now() WHERE space_identifier='00000000-0000-0000-0000-000000000ad2'$$,'23514','charging space cannot be removed');
@@ -440,8 +515,9 @@ UPDATE service_session SET end_datetime = now(),
        (consumed_energy_kwh, fully_charged_datetime, peak_charging_power_kw) =
        (SELECT e.energy_kwh, e.full_at, e.power_kw FROM fn_session_estimate('00000000-0000-0000-0000-000000000cf1', now()) AS e)
  WHERE session_identifier='00000000-0000-0000-0000-000000000cf1';
-SELECT pg_temp.expect_true((SELECT p.overtime_amount_value > 0 AND p.energy_amount_value = 65.60 * ss.applied_price_per_kwh_value
+SELECT pg_temp.expect_true((SELECT p.overtime_amount_value > 0 AND p.energy_amount_value = 65.60 * t.price_per_kwh_value
    FROM payment_transaction AS p JOIN service_session AS ss USING (session_identifier)
+   JOIN tariff_rate AS t ON t.rate_identifier = ss.rate_identifier
    WHERE p.session_identifier='00000000-0000-0000-0000-000000000cf1'),'computed session is billed with energy and overtime');
 INSERT INTO service_session (session_identifier, vehicle_identifier, equipment_identifier, start_datetime) VALUES
  ('00000000-0000-0000-0000-000000000cf2','00000000-0000-0000-0000-000000000cb1','00000000-0000-0000-0000-000000000ce1', now()-INTERVAL '10 minutes');
@@ -464,6 +540,18 @@ UPDATE payment_transaction SET transaction_status_code='FAILED', confirmed_by_id
 UPDATE payment_transaction SET transaction_status_code='PROCESSING', gateway_reference_identifier='DEMO-2' WHERE session_identifier='00000000-0000-0000-0000-000000000cf3';
 UPDATE payment_transaction SET transaction_status_code='SUCCESS', confirmed_by_identifier='00000000-0000-0000-0000-0000000000a5' WHERE session_identifier='00000000-0000-0000-0000-000000000cf3';
 SELECT pg_temp.expect_true((SELECT transaction_status_code='SUCCESS' AND gateway_reference_identifier='DEMO-2' FROM payment_transaction WHERE session_identifier='00000000-0000-0000-0000-000000000cf3'),'rejected payment can be paid again and then confirmed');
+
+-- Chuẩn hóa biểu giá: dời giờ cao điểm ở MỘT dòng time_band_window thì mọi loại cổng đổi theo
+UPDATE time_band_window SET end_time='16:00' WHERE start_time='05:00';
+UPDATE time_band_window SET start_time='16:00' WHERE start_time='17:00';
+SELECT pg_temp.expect_true((SELECT bool_and(t.time_band_code = 'PEAK')
+   FROM charging_equipment AS ce
+   JOIN tariff_rate AS t ON t.rate_identifier = fn_select_tariff(ce.equipment_identifier,
+                                  TIMESTAMPTZ '2026-12-01 16:30:00+07')
+   WHERE ce.equipment_identifier IN ('00000000-0000-0000-0000-0000000000e1','00000000-0000-0000-0000-0000000000e2')),
+   'moving the peak start in one row re-prices both connector types');
+UPDATE time_band_window SET start_time='17:00' WHERE start_time='16:00';
+UPDATE time_band_window SET end_time='17:00' WHERE start_time='05:00';
 
 -- mật khẩu xem được bị xóa cùng thông tin cá nhân
 UPDATE user_account SET deleted_datetime=now()-INTERVAL '31 minutes' WHERE account_identifier='00000000-0000-0000-0000-000000000ca1';

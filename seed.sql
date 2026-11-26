@@ -109,27 +109,57 @@ JOIN (
 WHERE s.num <= 8;
 
 
--- 7. tariff_rate: 3 khung giờ x (AC + 2 mức công suất DC) = 15 dòng, phủ 24 giờ
---    FAST_DC [0,100) kW và [100,1000) kW; STANDARD_AC [0,1000) kW
---    các cột giá: AC, DC<100, DC>=100  (VND mỗi kWh)
+-- 7. Biểu giá
+--    time_band: 3 khung; time_band_window: 5 khoảng giờ phủ kín 24 giờ
+--    (PEAK 17-20, OFF_PEAK 22-05 tách tại nửa đêm, còn lại STANDARD)
+--    power_tier: FAST_DC [0,100) và [100,1000) kW; STANDARD_AC [0,1000) kW
+--    tariff_rate: 3 dải x 3 khung = 9 ô giá, hiệu lực từ 01/08/2026;
+--    ngày 01/10/2026 tăng 200 VND/kWh cho FAST_DC từ 100 kW (thêm 3 phiên bản)
+--    parking_rate: giá đỗ xe theo giờ cho ô không có trụ, theo khung
+
+INSERT INTO time_band (time_band_code, time_band_name) VALUES
+    ('OFF_PEAK', 'Thấp điểm'),
+    ('STANDARD', 'Bình thường'),
+    ('PEAK',     'Cao điểm');
+
+INSERT INTO time_band_window (start_time, end_time, time_band_code) VALUES
+    ('00:00', '05:00', 'OFF_PEAK'),
+    ('05:00', '17:00', 'STANDARD'),
+    ('17:00', '20:00', 'PEAK'),
+    ('20:00', '22:00', 'STANDARD'),
+    ('22:00', '24:00', 'OFF_PEAK');
+
+INSERT INTO power_tier (connector_type_code, min_power_kw, max_power_kw) VALUES
+    ('STANDARD_AC',   0.00, 1000.00),
+    ('FAST_DC',       0.00,  100.00),
+    ('FAST_DC',     100.00, 1000.00);
 
 INSERT INTO tariff_rate
-    (connector_type_code, time_band_code, start_time, end_time,
-     min_power_kw, max_power_kw, price_per_kwh_value, overtime_fee_per_hour_value)
-SELECT t.connector, b.band, b.s::TIME, b.e::TIME, t.min_kw, t.max_kw,
-       b.base_price + t.surcharge, b.overtime
+    (connector_type_code, min_power_kw, time_band_code,
+     price_per_kwh_value, overtime_fee_per_hour_value, effective_from)
+SELECT t.connector, t.min_kw, b.band, b.base_price + t.surcharge, b.overtime,
+       TIMESTAMPTZ '2026-08-01 00:00:00+07'
 FROM (VALUES
-    ('STANDARD_AC',    0.00, 1000.00,    0),
-    ('FAST_DC',        0.00,  100.00,  700),
-    ('FAST_DC',      100.00, 1000.00, 1500)
-) AS t(connector, min_kw, max_kw, surcharge)
+    ('STANDARD_AC',   0.00,    0),
+    ('FAST_DC',       0.00,  700),
+    ('FAST_DC',     100.00, 1500)
+) AS t(connector, min_kw, surcharge)
 CROSS JOIN (VALUES
-    ('OFF_PEAK', '00:00', '05:00', 1500, 30000),
-    ('STANDARD', '05:00', '17:00', 2000, 45000),
-    ('PEAK',     '17:00', '20:00', 2600, 60000),
-    ('STANDARD', '20:00', '22:00', 2000, 45000),
-    ('OFF_PEAK', '22:00', '24:00', 1500, 30000)
-) AS b(band, s, e, base_price, overtime);
+    ('OFF_PEAK', 1500, 30000),
+    ('STANDARD', 2000, 45000),
+    ('PEAK',     2600, 60000)
+) AS b(band, base_price, overtime);
+
+-- đổi giá giữa kỳ: phiên bản cũ được đóng lại, hóa đơn trước đó vẫn trỏ tới nó
+SELECT fn_change_tariff(rate_identifier, price_per_kwh_value + 200,
+                        overtime_fee_per_hour_value, TIMESTAMPTZ '2026-10-01 00:00:00+07')
+FROM tariff_rate
+WHERE connector_type_code = 'FAST_DC' AND min_power_kw = 100.00;
+
+INSERT INTO parking_rate (time_band_code, price_per_hour_value, effective_from) VALUES
+    ('OFF_PEAK', 10000, TIMESTAMPTZ '2026-08-01 00:00:00+07'),
+    ('STANDARD', 15000, TIMESTAMPTZ '2026-08-01 00:00:00+07'),
+    ('PEAK',     20000, TIMESTAMPTZ '2026-08-01 00:00:00+07');
 
 
 -- 8. Lịch sử 2026-09-01 .. 2026-10-26 (56 ngày) sinh qua trigger
@@ -294,6 +324,90 @@ BEGIN
     END LOOP;
 END $$;
 
+-- 8b. Lịch sử đỗ xe ở các ô không có trụ (A-09..A-12), cùng giai đoạn
+--     Khoảng 35 % số ngày-ô có một lượt: đặt trước rồi đến đỗ (0-5),
+--     khách vãng lai (6-7), đặt rồi hủy (8), đặt rồi không đến (9).
+DO $$
+DECLARE
+    v_vehicles   UUID[];
+    sp           RECORD;
+    di           INT;
+    k            INT;
+    h            INT;
+    v_kind       INT;
+    v_start      TIMESTAMPTZ;
+    v_hours      NUMERIC;
+    v_vehicle    UUID;
+    v_res        UUID;
+    v_session    UUID;
+    v_busy_until TIMESTAMPTZ;
+BEGIN
+    SELECT array_agg(vehicle_identifier ORDER BY license_plate_text) INTO v_vehicles FROM vehicle;
+    FOR sp IN
+        SELECT row_number() OVER (ORDER BY f.facility_name_text, s.space_code) AS si,
+               s.space_identifier
+        FROM parking_space AS s
+        JOIN parking_facility AS f ON f.facility_identifier = s.facility_identifier
+        WHERE NOT EXISTS (SELECT 1 FROM charging_equipment AS ce
+                          WHERE ce.space_identifier = s.space_identifier)
+        ORDER BY 1
+    LOOP
+        v_busy_until := '-infinity';
+        FOR di IN 0 .. 55 LOOP
+            h := ('x' || substr(md5('p' || sp.si || ':' || di), 1, 7))::BIT(28)::INT;
+            CONTINUE WHEN h % 100 >= 35;
+            v_kind  := (h / 100) % 10;
+            v_start := ((DATE '2026-09-01' + di) + (7 + (h / 1000) % 14) * INTERVAL '1 hour'
+                        + ((h / 20000) % 4) * INTERVAL '15 minutes')
+                       AT TIME ZONE 'Asia/Ho_Chi_Minh';
+            v_hours := 1 + (h / 80000) % 4;                 -- đỗ 1..4 giờ
+            CONTINUE WHEN v_start < v_busy_until + INTERVAL '30 minutes';
+            v_busy_until := v_start + v_hours * INTERVAL '1 hour';
+
+            v_vehicle := NULL;
+            FOR k IN 0 .. 47 LOOP
+                v_vehicle := v_vehicles[1 + (sp.si * 11 + di * 5 + k) % 48];
+                EXIT WHEN NOT EXISTS (
+                    SELECT 1 FROM reservation AS r
+                    WHERE r.vehicle_identifier = v_vehicle
+                      AND tstzrange(r.start_datetime, r.end_datetime)
+                          && tstzrange(v_start - INTERVAL '3 hours', v_start + INTERVAL '6 hours'))
+                AND NOT EXISTS (
+                    SELECT 1 FROM service_session AS x
+                    WHERE x.vehicle_identifier = v_vehicle
+                      AND tstzrange(x.start_datetime, coalesce(x.end_datetime, 'infinity'))
+                          && tstzrange(v_start - INTERVAL '3 hours', v_start + INTERVAL '6 hours'));
+                v_vehicle := NULL;
+            END LOOP;
+            CONTINUE WHEN v_vehicle IS NULL;
+
+            v_res := NULL;
+            IF v_kind NOT IN (6, 7) THEN
+                INSERT INTO reservation
+                    (vehicle_identifier, space_identifier, start_datetime, end_datetime,
+                     reservation_status_code, created_datetime)
+                VALUES
+                    (v_vehicle, sp.space_identifier, v_start, v_start + v_hours * INTERVAL '1 hour',
+                     CASE v_kind WHEN 8 THEN 'CANCELLED' WHEN 9 THEN 'EXPIRED' ELSE 'CONFIRMED' END,
+                     v_start - ((3 + (h / 500) % 48) * INTERVAL '1 hour'))
+                RETURNING reservation_identifier INTO v_res;
+            END IF;
+            CONTINUE WHEN v_kind IN (8, 9);
+
+            -- khách đến trong vòng 10 phút, đỗ từ 70 % đến hết khung đã đặt
+            v_start := v_start + ((h / 3000) % 10) * INTERVAL '1 minute';
+            INSERT INTO service_session
+                (reservation_identifier, vehicle_identifier, space_identifier, start_datetime)
+            VALUES (v_res, v_vehicle, sp.space_identifier, v_start)
+            RETURNING session_identifier INTO v_session;
+            UPDATE service_session
+            SET end_datetime = v_start + v_hours * (0.7 + (h / 7000) % 4 * 0.1) * INTERVAL '1 hour'
+            WHERE session_identifier = v_session;
+            v_busy_until := greatest(v_busy_until, v_start + v_hours * INTERVAL '1 hour');
+        END LOOP;
+    END LOOP;
+END $$;
+
 -- -----------------------------------------------------------------------------
 -- 9. Thanh toán: hóa đơn được trg_session_finish tạo ở trạng thái PENDING.
 --    Chỉ cập nhật trạng thái / phương thức / mã tham chiếu cổng / thời điểm tạo
@@ -333,8 +447,8 @@ FROM (
     FROM payment_transaction AS t
     JOIN service_session AS s ON s.session_identifier = t.session_identifier
     JOIN vehicle AS v ON v.vehicle_identifier = s.vehicle_identifier
-    JOIN charging_equipment AS ce ON ce.equipment_identifier = s.equipment_identifier
-    JOIN parking_space AS sp ON sp.space_identifier = ce.space_identifier
+    LEFT JOIN charging_equipment AS ce ON ce.equipment_identifier = s.equipment_identifier
+    JOIN parking_space AS sp ON sp.space_identifier = coalesce(s.space_identifier, ce.space_identifier)
 ) AS q;
 
 -- Bước 1: khách trả tiền -> PROCESSING (chờ quản lý bãi xác nhận).
@@ -436,6 +550,15 @@ BEGIN
     ORDER BY f.facility_name_text
     LIMIT 1;
 
+    -- 2 xe vãng lai đang đỗ ở ô không có trụ (A-12 của hai bãi đầu)
+    INSERT INTO service_session (vehicle_identifier, space_identifier, start_datetime)
+    SELECT v_vehicles[39 + n.rn::INT], s.space_identifier, now() - (40 + n.rn * 25) * INTERVAL '1 minute'
+    FROM (SELECT s.space_identifier, row_number() OVER (ORDER BY f.facility_name_text) AS rn
+          FROM parking_space AS s
+          JOIN parking_facility AS f ON f.facility_identifier = s.facility_identifier
+          WHERE s.space_code = 'A-12') AS s
+    JOIN (SELECT generate_series(1, 2) AS rn) AS n ON n.rn = s.rn;
+
     -- lượt đặt chỉ đỗ xe trên các ô không có trụ sạc (A-10)
     INSERT INTO reservation
         (vehicle_identifier, space_identifier, start_datetime, end_datetime,
@@ -475,7 +598,11 @@ UNION ALL SELECT 'parking_facility', count(*) FROM parking_facility
 UNION ALL SELECT 'facility_manager', count(*) FROM facility_manager
 UNION ALL SELECT 'parking_space', count(*) FROM parking_space
 UNION ALL SELECT 'charging_equipment', count(*) FROM charging_equipment
+UNION ALL SELECT 'time_band', count(*) FROM time_band
+UNION ALL SELECT 'time_band_window', count(*) FROM time_band_window
+UNION ALL SELECT 'power_tier', count(*) FROM power_tier
 UNION ALL SELECT 'tariff_rate', count(*) FROM tariff_rate
+UNION ALL SELECT 'parking_rate', count(*) FROM parking_rate
 UNION ALL SELECT 'reservation', count(*) FROM reservation
 UNION ALL SELECT 'service_session', count(*) FROM service_session
 UNION ALL SELECT 'payment_transaction', count(*) FROM payment_transaction;

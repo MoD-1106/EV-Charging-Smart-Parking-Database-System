@@ -10,11 +10,6 @@ createdb evt
 psql -d evt -v ON_ERROR_STOP=1 -f ../schema.sql
 psql -d evt -v ON_ERROR_STOP=1 -f ../seed.sql
 psql -d evt -v ON_ERROR_STOP=1 -f sql/demo_accounts.sql   # tạo tài khoản admin, quản lý, khách
-psql -d evt -v ON_ERROR_STOP=1 -f sql/demo_data.sql       # vài phiên sạc gần đây cho tài khoản khách demo
-
-# (nên làm) tài khoản CSDL quyền tối thiểu cho web
-psql -d evt -v ON_ERROR_STOP=1 -f ../roles.sql
-psql -d evt -c "ALTER ROLE evc_app PASSWORD 'MAT_KHAU_APP'"   # rồi dùng evc_app trong DATABASE_URL
 
 # 2. Ứng dụng
 python -m venv .venv
@@ -31,18 +26,9 @@ Mở http://127.0.0.1:5000. Email và mật khẩu demo nằm trong `DEMO_ACCOUN
 
 | Vai trò | Trang | Chức năng |
 |---|---|---|
-| CUSTOMER | `/register`, `/customer` | Tự đăng ký; xem ô trống theo khung giờ (`fn_is_space_available`), giá theo giờ bắt đầu (`fn_select_tariff`), đặt chỗ, hủy chỗ, xem và thanh toán hóa đơn (cổng thanh toán mô phỏng). Đặt trước tối đa 30 ngày, giữ tối đa 3 lượt, phải trả hết hóa đơn mới đặt tiếp |
-| MANAGER | `/manager` | Chỉ thấy bãi được phân công: sơ đồ ô, báo lỗi/bảo trì/sẵn sàng thiết bị, xác nhận đặt chỗ, hủy đặt chỗ quá 30 phút, ghi nhận khách đến ô chỉ đỗ xe, bắt đầu và kết thúc phiên sạc |
+| CUSTOMER | `/register`, `/customer` | Tự đăng ký; xem ô trống theo khung giờ (`fn_is_space_available`), giá theo giờ bắt đầu (`fn_select_tariff`), đặt chỗ, hủy chỗ, xem và thanh toán hóa đơn (cổng thanh toán mô phỏng) |
+| MANAGER | `/manager` | Chỉ thấy bãi được phân công: sơ đồ ô, báo lỗi/bảo trì/sẵn sàng thiết bị, xác nhận đặt chỗ, hủy đặt chỗ quá 30 phút |
 | ADMIN | `/admin` | Doanh thu, sửa biểu giá, phân công quản lý cho bãi, tạo tài khoản MANAGER/ADMIN, đối soát hóa đơn |
-
-## Diễn thử luồng sạc
-
-Tài khoản khách demo có sẵn một hóa đơn chờ thanh toán: hãy thanh toán trước rồi mới đặt được chỗ.
-
-1. Khách đặt một ô có trụ sạc, giờ bắt đầu trong vòng 15 phút tới.
-2. Quản lý xác nhận, nhập biển số (được điền sẵn khi đã tới giờ nhận chỗ) rồi bấm "Bắt đầu sạc".
-3. Quản lý nhập số kWh rồi bấm "Kết thúc sạc"; hóa đơn được lập tự động. Số kWh phải phù hợp thời gian đã sạc (công suất × (thời gian + 5 phút)) và dung lượng pin, nên phiên vừa bắt đầu chỉ nhập được số nhỏ; muốn nhập số lớn hãy dùng một phiên đang mở sẵn.
-4. Khách thanh toán hóa đơn.
 
 ## API giờ và đồng hồ
 
@@ -76,12 +62,10 @@ Khung "Phiên đang sạc" chỉ hiện khi tài khoản có phiên chưa kết 
 - Tài khoản trong `seed.sql` dùng mật khẩu băm giả, không đăng nhập được. Đây là chủ ý của dữ liệu mẫu.
 - Admin tạo tài khoản MANAGER/ADMIN trong tab Tài khoản và **tự nhập mật khẩu** (tối thiểu 8 ký tự, nhập lại để xác nhận). Hệ thống chỉ lưu bản băm và không hiển thị lại mật khẩu.
 - Khách hàng tự đăng ký tại `/register` (liên kết ở trang đăng nhập): họ tên, email, số điện thoại, mật khẩu và xe đầu tiên (biển số, dung lượng pin). Vai trò luôn là `CUSTOMER`; tài khoản và xe được tạo trong một câu SQL nên không có tài khoản thiếu xe. Email, số điện thoại và biển số trùng sẽ báo lỗi riêng. Đăng ký xong quay về trang đăng nhập.
-- Đăng nhập sai 5 lần (theo địa chỉ máy và email) bị khóa 5 phút. Demo chưa giới hạn số lần đăng ký; trang đăng ký công khai và thông báo trùng email cho biết email đã tồn tại.
+- Demo chưa giới hạn số lần đăng ký hoặc đăng nhập; trang đăng ký công khai và thông báo trùng email cho biết email đã tồn tại.
 
 ## Lưu ý
 - Ứng dụng không dùng PostGIS, nên chạy được cả khi CSDL dùng `GEOMETRY` lẫn `POINT`.
 - Các form POST có mã CSRF; phân quyền kiểm tra ở từng route và trong câu SQL (quản lý chỉ sửa được thiết bị thuộc bãi mình phụ trách).
-- Đây là bản demo: chưa có HTTPS hay cổng thanh toán thật. Không đặt `SECRET_KEY` thì khóa được sinh ngẫu nhiên, khởi động lại là phải đăng nhập lại.
-- Danh sách phiên đăng xuất được giữ trong bộ nhớ: khi chạy nhiều tiến trình hoặc khởi động lại mà vẫn dùng cùng `SECRET_KEY`, cookie đã đăng xuất chưa bị chặn.
-- Đặt chỗ quá hạn được hủy khi có người mở trang khách, quản lý hoặc admin (tối đa mỗi phút một lần).
-- Hạn chế của lược đồ đã nêu trong phần review (chưa có biểu giá cho ô chỉ đỗ xe, chưa có chỉ số sạc theo thời gian) thể hiện trực tiếp trên giao diện.
+- Đây là bản demo: chưa có HTTPS, giới hạn số lần đăng nhập, hay cổng thanh toán thật.
+- Hạn chế của lược đồ đã nêu trong phần review (chưa có biểu giá cho ô chỉ đỗ xe, chưa có chỉ số sạc theo thời gian, chưa chặn check-in sớm) thể hiện trực tiếp trên giao diện.

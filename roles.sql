@@ -27,7 +27,9 @@ GRANT UPDATE (availability_status_code) ON parking_space TO evc_app;
 GRANT UPDATE (transaction_status_code, payment_method_code, gateway_reference_identifier,
                 confirmed_by_identifier, confirmed_datetime)
     ON payment_transaction TO evc_app;
-GRANT UPDATE (price_per_kwh_value, overtime_fee_per_hour_value) ON tariff_rate TO evc_app;
+-- đổi giá chỉ qua hàm (đóng phiên bản cũ, thêm phiên bản mới); không sửa bảng giá trực tiếp
+GRANT EXECUTE ON FUNCTION fn_change_tariff(UUID, DECIMAL, DECIMAL, TIMESTAMPTZ),
+                          fn_change_parking_rate(UUID, DECIMAL, TIMESTAMPTZ) TO evc_app;
 -- admin xóa tài khoản là xóa mềm; trigger ngừng luôn xe của tài khoản đó
 GRANT UPDATE (deleted_datetime) ON user_account, vehicle TO evc_app;
 -- admin đặt lại mật khẩu; lần đăng nhập đầu sau khi nâng cấp ghi lại mật khẩu để admin xem

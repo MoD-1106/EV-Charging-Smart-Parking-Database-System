@@ -19,7 +19,7 @@ CREATE TABLE user_account (
     created_datetime     TIMESTAMPTZ  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_datetime     TIMESTAMPTZ,
     purged_datetime      TIMESTAMPTZ,          -- đã xóa vĩnh viễn thông tin cá nhân
-    -- mật khẩu gốc để quản trị viên xem (theo yêu cầu của đồ án; đăng nhập vẫn kiểm bản băm)
+    -- mật khẩu gốc để quản trị viên xem (lựa chọn của nhóm để demo; đăng nhập vẫn kiểm bản băm)
     password_plain_text  VARCHAR(255),
     CONSTRAINT ck_user_account_role
         CHECK (role_code IN ('CUSTOMER', 'MANAGER', 'ADMIN')),
@@ -80,6 +80,8 @@ CREATE TABLE facility_manager (
     PRIMARY KEY (manager_identifier, facility_identifier)
 );
 
+CREATE INDEX ix_facility_manager_facility ON facility_manager (facility_identifier);
+
 
 -- 5. parking_space
 
@@ -98,6 +100,7 @@ CREATE TABLE parking_space (
 CREATE UNIQUE INDEX ux_parking_space_code
     ON parking_space (facility_identifier, space_code)
     WHERE deleted_datetime IS NULL;
+CREATE INDEX ix_parking_space_facility ON parking_space (facility_identifier);
 
 
 -- 6. charging_equipment  (mở rộng 1:1 của parking_space)
@@ -124,40 +127,106 @@ CREATE UNIQUE INDEX ux_charging_equipment_space
     ON charging_equipment (space_identifier) WHERE deleted_datetime IS NULL;
 CREATE UNIQUE INDEX ux_charging_equipment_evse
     ON charging_equipment (evse_identifier) WHERE deleted_datetime IS NULL;
+CREATE INDEX ix_charging_equipment_space ON charging_equipment (space_identifier);
 
 
--- 7. tariff_rate
--- Khung giờ không vắt qua nửa đêm: 22:00-05:00 được lưu thành hai dòng
--- (22:00-24:00 và 00:00-05:00). Dải công suất là nửa mở [min, max) và được
--- so với charging_equipment.max_power_kw (công suất định mức).
+-- 7. Biểu giá: time_band, time_band_window, power_tier, tariff_rate, parking_rate
+-- Lịch khung giờ khai báo MỘT lần cho cả hệ thống (time_band_window), dải công
+-- suất khai báo một lần cho mỗi loại cổng (power_tier); bảng giá chỉ lưu giá theo
+-- (dải công suất, khung). Khung không vắt qua nửa đêm: 22:00-05:00 lưu thành
+-- 22:00-24:00 và 00:00-05:00. Dải công suất là nửa mở [min, max).
+-- Giá có lịch sử: mỗi dòng giá là một PHIÊN BẢN có hiệu lực
+-- [effective_from, effective_to); đổi giá = đóng phiên bản cũ và thêm phiên bản
+-- mới (fn_change_tariff), không sửa đè. Phiên sạc trỏ tới phiên bản đã áp dụng.
+
+CREATE TABLE time_band (
+    time_band_code  VARCHAR(20)  PRIMARY KEY,
+    time_band_name  VARCHAR(50)  NOT NULL,
+    CONSTRAINT ck_time_band_code
+        CHECK (time_band_code IN ('PEAK', 'STANDARD', 'OFF_PEAK'))
+);
+
+CREATE TABLE time_band_window (
+    start_time      TIME         PRIMARY KEY,
+    end_time        TIME         NOT NULL,
+    time_band_code  VARCHAR(20)  NOT NULL
+        REFERENCES time_band (time_band_code) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT ck_time_band_window_time CHECK (end_time > start_time),
+    -- hai khoảng giờ không được chồng nhau
+    CONSTRAINT ex_time_band_window_no_overlap EXCLUDE USING gist (
+        int4range(extract(epoch FROM start_time)::INT,
+                  extract(epoch FROM end_time)::INT) WITH &&
+    )
+);
+
+CREATE INDEX ix_time_band_window_band ON time_band_window (time_band_code);
+
+CREATE TABLE power_tier (
+    connector_type_code  VARCHAR(50)   NOT NULL,
+    min_power_kw         DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    max_power_kw         DECIMAL(10,2) NOT NULL,
+    PRIMARY KEY (connector_type_code, min_power_kw),
+    CONSTRAINT ck_power_tier_connector
+        CHECK (connector_type_code IN ('FAST_DC', 'STANDARD_AC')),
+    CONSTRAINT ck_power_tier_power
+        CHECK (min_power_kw >= 0 AND max_power_kw > min_power_kw),
+    -- các dải của cùng một loại cổng không chồng nhau
+    CONSTRAINT ex_power_tier_no_overlap EXCLUDE USING gist (
+        connector_type_code WITH =,
+        numrange(min_power_kw, max_power_kw) WITH &&
+    )
+);
 
 CREATE TABLE tariff_rate (
     rate_identifier             UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     connector_type_code         VARCHAR(50)   NOT NULL,
-    time_band_code              VARCHAR(20)   NOT NULL,
-    start_time                  TIME          NOT NULL,
-    end_time                    TIME          NOT NULL,
-    min_power_kw                DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    max_power_kw                DECIMAL(10,2) NOT NULL,
+    min_power_kw                DECIMAL(10,2) NOT NULL,
+    time_band_code              VARCHAR(20)   NOT NULL
+        REFERENCES time_band (time_band_code) ON DELETE RESTRICT ON UPDATE CASCADE,
     price_per_kwh_value         DECIMAL(10,2) NOT NULL,
     overtime_fee_per_hour_value DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    CONSTRAINT ck_tariff_rate_connector
-        CHECK (connector_type_code IN ('FAST_DC', 'STANDARD_AC')),
-    CONSTRAINT ck_tariff_rate_band
-        CHECK (time_band_code IN ('PEAK', 'STANDARD', 'OFF_PEAK')),
-    CONSTRAINT ck_tariff_rate_time CHECK (end_time > start_time),
-    CONSTRAINT ck_tariff_rate_power
-        CHECK (min_power_kw >= 0 AND max_power_kw > min_power_kw),
+    effective_from              TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    effective_to                TIMESTAMPTZ,
+    CONSTRAINT fk_tariff_rate_power_tier
+        FOREIGN KEY (connector_type_code, min_power_kw)
+        REFERENCES power_tier (connector_type_code, min_power_kw)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT ck_tariff_rate_price
         CHECK (price_per_kwh_value >= 0 AND price_per_kwh_value <> 'NaN'),
     CONSTRAINT ck_tariff_rate_overtime
         CHECK (overtime_fee_per_hour_value >= 0 AND overtime_fee_per_hour_value <> 'NaN'),
-    -- hai dòng cùng loại cổng không được chồng nhau cả về giờ VÀ công suất
+    CONSTRAINT ck_tariff_rate_period
+        CHECK (effective_to IS NULL OR effective_to > effective_from),
+    -- khóa ứng viên nghiệp vụ: một phiên bản giá bắt đầu tại một thời điểm
+    CONSTRAINT uq_tariff_rate_key
+        UNIQUE (connector_type_code, min_power_kw, time_band_code, effective_from),
+    -- cùng (dải công suất, khung) thì các phiên bản không chồng thời gian hiệu lực
     CONSTRAINT ex_tariff_rate_no_overlap EXCLUDE USING gist (
         connector_type_code WITH =,
-        int4range(extract(epoch FROM start_time)::INT,
-                  extract(epoch FROM end_time)::INT) WITH &&,
-        numrange(min_power_kw, max_power_kw) WITH &&
+        min_power_kw WITH =,
+        time_band_code WITH =,
+        tstzrange(effective_from, effective_to) WITH &&
+    )
+);
+
+CREATE INDEX ix_tariff_rate_band ON tariff_rate (time_band_code);
+
+-- Giá đỗ xe theo giờ cho ô không có trụ sạc, cũng có lịch sử như tariff_rate
+CREATE TABLE parking_rate (
+    parking_rate_identifier  UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
+    time_band_code           VARCHAR(20)   NOT NULL
+        REFERENCES time_band (time_band_code) ON DELETE RESTRICT ON UPDATE CASCADE,
+    price_per_hour_value     DECIMAL(10,2) NOT NULL,
+    effective_from           TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    effective_to             TIMESTAMPTZ,
+    CONSTRAINT ck_parking_rate_price
+        CHECK (price_per_hour_value >= 0 AND price_per_hour_value <> 'NaN'),
+    CONSTRAINT ck_parking_rate_period
+        CHECK (effective_to IS NULL OR effective_to > effective_from),
+    CONSTRAINT uq_parking_rate_key UNIQUE (time_band_code, effective_from),
+    CONSTRAINT ex_parking_rate_no_overlap EXCLUDE USING gist (
+        time_band_code WITH =,
+        tstzrange(effective_from, effective_to) WITH &&
     )
 );
 
@@ -197,14 +266,17 @@ CREATE TABLE reservation (
 );
 
 CREATE INDEX ix_reservation_vehicle ON reservation (vehicle_identifier);
+CREATE INDEX ix_reservation_space ON reservation (space_identifier);
 CREATE INDEX ix_reservation_timeout
     ON reservation (start_datetime)
     WHERE reservation_status_code IN ('PENDING', 'CONFIRMED');
 
 
 -- 9. service_session
--- Tài khoản sở hữu được suy ra qua vehicle.account_identifier
--- không lặp lại cột tài khoản
+-- Phiên sử dụng: phiên SẠC (equipment_identifier, giá tariff_rate) hoặc phiên
+-- CHỈ ĐỖ XE ở ô không có trụ (space_identifier, giá parking_rate); đúng một trong
+-- hai (ràng buộc loại trừ). Ô của phiên sạc suy ra qua thiết bị, không lưu lặp.
+-- Tài khoản sở hữu được suy ra qua vehicle.account_identifier.
 
 CREATE TABLE service_session (
     session_identifier     UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -212,18 +284,29 @@ CREATE TABLE service_session (
         REFERENCES reservation (reservation_identifier) ON DELETE SET NULL,
     vehicle_identifier     UUID          NOT NULL
         REFERENCES vehicle (vehicle_identifier) ON DELETE RESTRICT,
-    equipment_identifier   UUID          NOT NULL
+    equipment_identifier   UUID
         REFERENCES charging_equipment (equipment_identifier) ON DELETE RESTRICT,
+    space_identifier       UUID
+        REFERENCES parking_space (space_identifier) ON DELETE RESTRICT,
     start_datetime         TIMESTAMPTZ   NOT NULL DEFAULT CURRENT_TIMESTAMP,
     end_datetime           TIMESTAMPTZ,
     fully_charged_datetime TIMESTAMPTZ,
     peak_charging_power_kw DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     consumed_energy_kwh    DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    -- đơn giá chốt lúc bắt đầu sạc (trigger tự ghi); đổi biểu giá không ảnh hưởng
-    applied_price_per_kwh_value       DECIMAL(10,2),
-    applied_overtime_fee_per_hour_value DECIMAL(10,2),
+    -- phiên bản giá chốt lúc bắt đầu (trigger tự ghi, không sửa được)
+    rate_identifier        UUID
+        REFERENCES tariff_rate (rate_identifier) ON DELETE RESTRICT,
+    parking_rate_identifier UUID
+        REFERENCES parking_rate (parking_rate_identifier) ON DELETE RESTRICT,
     -- % pin lúc cắm sạc do quản lý nhập; điện năng và giờ đầy pin tự tính (fn_session_estimate)
     start_battery_percent  DECIMAL(5,2),
+    CONSTRAINT ck_service_session_kind
+        CHECK ((equipment_identifier IS NOT NULL AND space_identifier IS NULL
+                AND rate_identifier IS NOT NULL AND parking_rate_identifier IS NULL)
+            OR (equipment_identifier IS NULL AND space_identifier IS NOT NULL
+                AND rate_identifier IS NULL AND parking_rate_identifier IS NOT NULL
+                AND consumed_energy_kwh = 0 AND peak_charging_power_kw = 0
+                AND fully_charged_datetime IS NULL AND start_battery_percent IS NULL)),
     CONSTRAINT ck_service_session_battery_percent
         CHECK (start_battery_percent IS NULL
                OR (start_battery_percent >= 0 AND start_battery_percent < 100)),
@@ -246,7 +329,14 @@ CREATE UNIQUE INDEX ux_service_session_open_equipment
 -- mỗi xe cũng chỉ có một phiên đang mở
 CREATE UNIQUE INDEX ux_service_session_open_vehicle
     ON service_session (vehicle_identifier) WHERE end_datetime IS NULL;
+-- mỗi ô chỉ đỗ xe chỉ có một phiên đang mở
+CREATE UNIQUE INDEX ux_service_session_open_space
+    ON service_session (space_identifier) WHERE end_datetime IS NULL;
 CREATE INDEX ix_service_session_vehicle ON service_session (vehicle_identifier);
+CREATE INDEX ix_service_session_equipment ON service_session (equipment_identifier);
+CREATE INDEX ix_service_session_space ON service_session (space_identifier);
+CREATE INDEX ix_service_session_rate ON service_session (rate_identifier);
+CREATE INDEX ix_service_session_parking_rate ON service_session (parking_rate_identifier);
 
 
 -- 10. payment_transaction
@@ -255,10 +345,9 @@ CREATE TABLE payment_transaction (
     transaction_identifier       UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     session_identifier           UUID          NOT NULL UNIQUE
         REFERENCES service_session (session_identifier) ON DELETE RESTRICT,
-    rate_identifier              UUID          NOT NULL
-        REFERENCES tariff_rate (rate_identifier) ON DELETE RESTRICT,
-    energy_amount_value          DECIMAL(12,2) NOT NULL,
+    energy_amount_value          DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     overtime_amount_value        DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    parking_amount_value         DECIMAL(12,2) NOT NULL DEFAULT 0.00,
     transaction_amount_value     DECIMAL(12,2) NOT NULL,
     currency_code                CHAR(3)       NOT NULL DEFAULT 'VND',
     payment_method_code          VARCHAR(50),
@@ -280,8 +369,9 @@ CREATE TABLE payment_transaction (
                OR (confirmed_by_identifier IS NOT NULL AND confirmed_datetime IS NOT NULL)),
     CONSTRAINT ck_payment_amounts
         CHECK (energy_amount_value >= 0 AND overtime_amount_value >= 0
+               AND parking_amount_value >= 0
                AND transaction_amount_value
-                   = energy_amount_value + overtime_amount_value),
+                   = energy_amount_value + overtime_amount_value + parking_amount_value),
     CONSTRAINT ck_payment_currency CHECK (currency_code IN ('VND', 'USD')),
     CONSTRAINT ck_payment_method
         CHECK (payment_method_code IS NULL
@@ -297,11 +387,15 @@ CREATE TABLE payment_transaction (
                    AND gateway_reference_identifier IS NOT NULL))
 );
 
+CREATE INDEX ix_payment_transaction_confirmed_by
+    ON payment_transaction (confirmed_by_identifier);
+
 
 -- HÀM VÀ TRIGGER
 
 
--- Tra biểu giá: chọn giá theo giờ BẮT ĐẦU phiên (giờ địa phương)
+-- Tra biểu giá: chọn phiên bản giá có hiệu lực tại giờ BẮT ĐẦU phiên;
+-- khung giờ theo giờ địa phương, dải công suất theo công suất định mức của trụ
 CREATE OR REPLACE FUNCTION fn_select_tariff(
     p_equipment_identifier UUID,
     p_start_datetime       TIMESTAMPTZ
@@ -309,13 +403,146 @@ CREATE OR REPLACE FUNCTION fn_select_tariff(
 LANGUAGE sql STABLE AS $$
     SELECT t.rate_identifier
     FROM charging_equipment AS ce
+    JOIN time_band_window AS w
+      ON (p_start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::TIME >= w.start_time
+     AND (p_start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::TIME <  w.end_time
+    JOIN power_tier AS pt
+      ON pt.connector_type_code = ce.connector_type_code
+     AND ce.max_power_kw >= pt.min_power_kw
+     AND ce.max_power_kw <  pt.max_power_kw
     JOIN tariff_rate AS t
-      ON t.connector_type_code = ce.connector_type_code
-     AND ce.max_power_kw >= t.min_power_kw
-     AND ce.max_power_kw <  t.max_power_kw
-     AND (p_start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::TIME >= t.start_time
-     AND (p_start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::TIME <  t.end_time
+      ON t.connector_type_code = pt.connector_type_code
+     AND t.min_power_kw = pt.min_power_kw
+     AND t.time_band_code = w.time_band_code
+     AND p_start_datetime >= t.effective_from
+     AND (t.effective_to IS NULL OR p_start_datetime < t.effective_to)
     WHERE ce.equipment_identifier = p_equipment_identifier
+$$;
+
+-- Giá đỗ xe theo giờ có hiệu lực tại giờ bắt đầu phiên chỉ đỗ xe
+CREATE OR REPLACE FUNCTION fn_select_parking_rate(p_start_datetime TIMESTAMPTZ)
+RETURNS UUID
+LANGUAGE sql STABLE AS $$
+    SELECT pr.parking_rate_identifier
+    FROM time_band_window AS w
+    JOIN parking_rate AS pr
+      ON pr.time_band_code = w.time_band_code
+     AND p_start_datetime >= pr.effective_from
+     AND (pr.effective_to IS NULL OR p_start_datetime < pr.effective_to)
+    WHERE (p_start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::TIME >= w.start_time
+      AND (p_start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::TIME <  w.end_time
+$$;
+
+-- Đổi giá: đóng phiên bản đang hiệu lực tại p_at và thêm phiên bản mới từ p_at.
+-- SECURITY DEFINER: web chỉ được gọi hàm, không sửa trực tiếp bảng giá.
+CREATE OR REPLACE FUNCTION fn_change_tariff(
+    p_rate_identifier UUID,
+    p_price_per_kwh   DECIMAL(10,2),
+    p_overtime_fee    DECIMAL(10,2),
+    p_at              TIMESTAMPTZ DEFAULT clock_timestamp()
+) RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+    v_old tariff_rate%ROWTYPE;
+    v_new UUID;
+BEGIN
+    SELECT * INTO v_old FROM tariff_rate
+    WHERE rate_identifier = p_rate_identifier FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Price version % does not exist', p_rate_identifier
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_old.effective_to IS NOT NULL THEN
+        RAISE EXCEPTION 'Only the current price version can be changed'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    UPDATE tariff_rate SET effective_to = p_at WHERE rate_identifier = p_rate_identifier;
+    INSERT INTO tariff_rate (connector_type_code, min_power_kw, time_band_code,
+                             price_per_kwh_value, overtime_fee_per_hour_value, effective_from)
+    VALUES (v_old.connector_type_code, v_old.min_power_kw, v_old.time_band_code,
+            p_price_per_kwh, p_overtime_fee, p_at)
+    RETURNING rate_identifier INTO v_new;
+    RETURN v_new;
+END $$;
+
+CREATE OR REPLACE FUNCTION fn_change_parking_rate(
+    p_parking_rate_identifier UUID,
+    p_price_per_hour          DECIMAL(10,2),
+    p_at                      TIMESTAMPTZ DEFAULT clock_timestamp()
+) RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+    v_old parking_rate%ROWTYPE;
+    v_new UUID;
+BEGIN
+    SELECT * INTO v_old FROM parking_rate
+    WHERE parking_rate_identifier = p_parking_rate_identifier FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Price version % does not exist', p_parking_rate_identifier
+            USING ERRCODE = 'no_data_found';
+    END IF;
+    IF v_old.effective_to IS NOT NULL THEN
+        RAISE EXCEPTION 'Only the current price version can be changed'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    UPDATE parking_rate SET effective_to = p_at
+    WHERE parking_rate_identifier = p_parking_rate_identifier;
+    INSERT INTO parking_rate (time_band_code, price_per_hour_value, effective_from)
+    VALUES (v_old.time_band_code, p_price_per_hour, p_at)
+    RETURNING parking_rate_identifier INTO v_new;
+    RETURN v_new;
+END $$;
+
+REVOKE ALL ON FUNCTION fn_change_tariff(UUID, DECIMAL, DECIMAL, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION fn_change_parking_rate(UUID, DECIMAL, TIMESTAMPTZ) FROM PUBLIC;
+
+-- ---- T0: phiên bản giá không sửa đè; chỉ được đóng (ghi effective_to) một lần
+CREATE OR REPLACE FUNCTION fn_rate_version_fixed() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF OLD.effective_to IS NOT NULL OR NEW.effective_to IS NULL
+       OR to_jsonb(NEW) - 'effective_to' <> to_jsonb(OLD) - 'effective_to' THEN
+        RAISE EXCEPTION 'A price version is never edited; add a new version instead'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER trg_tariff_rate_fixed
+    BEFORE UPDATE ON tariff_rate
+    FOR EACH ROW EXECUTE FUNCTION fn_rate_version_fixed();
+CREATE TRIGGER trg_parking_rate_fixed
+    BEFORE UPDATE ON parking_rate
+    FOR EACH ROW EXECUTE FUNCTION fn_rate_version_fixed();
+
+-- ---- T0b: lịch khung giờ phải phủ kín 24 giờ (kiểm tra cuối giao dịch, để
+-- sửa nhiều dòng trong một giao dịch, ví dụ dời giờ cao điểm). Các khoảng
+-- không chồng nhau (EXCLUDE) nên tổng độ dài 24 giờ nghĩa là không có khe hở.
+CREATE OR REPLACE FUNCTION fn_time_band_window_coverage() RETURNS TRIGGER
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF (SELECT coalesce(sum(extract(epoch FROM end_time - start_time)), 0)
+        FROM time_band_window) <> 86400 THEN
+        RAISE EXCEPTION 'Time band windows must cover the whole day'
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'ck_time_band_window_coverage';
+    END IF;
+    RETURN NULL;
+END $$;
+
+CREATE CONSTRAINT TRIGGER trg_time_band_window_coverage
+    AFTER INSERT OR UPDATE OR DELETE ON time_band_window
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION fn_time_band_window_coverage();
+
+-- Ô đang có phiên mở (phiên sạc qua trụ của ô, hoặc phiên chỉ đỗ xe)
+CREATE OR REPLACE FUNCTION fn_space_has_open_session(p_space_identifier UUID)
+RETURNS BOOLEAN
+LANGUAGE sql STABLE AS $$
+    SELECT EXISTS (SELECT 1 FROM service_session AS s
+                   WHERE s.space_identifier = p_space_identifier AND s.end_datetime IS NULL)
+        OR EXISTS (SELECT 1 FROM service_session AS s
+                   JOIN charging_equipment AS ce ON ce.equipment_identifier = s.equipment_identifier
+                   WHERE ce.space_identifier = p_space_identifier AND s.end_datetime IS NULL)
 $$;
 
 -- ---- T1: chỉ tài khoản MANAGER mới được phân công quản lý bãi --------------
@@ -431,12 +658,8 @@ BEGIN
     IF NEW.reservation_status_code IN ('PENDING', 'CONFIRMED')
        AND NEW.start_datetime < CURRENT_TIMESTAMP + INTERVAL '30 minutes'
        AND NEW.end_datetime > CURRENT_TIMESTAMP
-       AND EXISTS (SELECT 1 FROM service_session AS s
-                   JOIN charging_equipment AS ce
-                     ON ce.equipment_identifier = s.equipment_identifier
-                   WHERE ce.space_identifier = NEW.space_identifier
-                     AND s.end_datetime IS NULL) THEN
-        RAISE EXCEPTION 'Space is occupied by a charging session'
+       AND fn_space_has_open_session(NEW.space_identifier) THEN
+        RAISE EXCEPTION 'Space is occupied by an open session'
             USING ERRCODE = 'exclusion_violation';
     END IF;
     RETURN NEW;
@@ -468,23 +691,12 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    -- FULFILLED: ô có trụ phải qua phiên sạc; ô chỉ đỗ xe được ghi nhận đến
-    -- trong khoảng sớm 15 phút đến trễ 30 phút
+    -- FULFILLED chỉ khi đã mở phiên (phiên sạc hoặc phiên chỉ đỗ xe)
     IF NEW.reservation_status_code = 'FULFILLED'
        AND NOT EXISTS (SELECT 1 FROM service_session
                        WHERE reservation_identifier = NEW.reservation_identifier) THEN
-        IF EXISTS (SELECT 1 FROM charging_equipment
-                   WHERE space_identifier = NEW.space_identifier
-                     AND deleted_datetime IS NULL) THEN
-            RAISE EXCEPTION 'A charging space is checked in by starting a session'
-                USING ERRCODE = 'check_violation';
-        END IF;
-        IF CURRENT_TIMESTAMP < NEW.start_datetime - INTERVAL '15 minutes'
-           OR CURRENT_TIMESTAMP > NEW.start_datetime + INTERVAL '30 minutes'
-           OR CURRENT_TIMESTAMP >= NEW.end_datetime THEN
-            RAISE EXCEPTION 'Check-in is outside the arrival window'
-                USING ERRCODE = 'check_violation';
-        END IF;
+        RAISE EXCEPTION 'A booking is used by opening a session'
+            USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
 END $$;
@@ -535,7 +747,7 @@ CREATE TRIGGER trg_equipment_status_sync
     WHEN (OLD.equipment_status_code IS DISTINCT FROM NEW.equipment_status_code)
     EXECUTE FUNCTION fn_equipment_status_sync();
 
--- ---- T5: kiểm tra phiên sạc trước khi bắt đầu ------------------------------
+-- ---- T5: kiểm tra phiên trước khi bắt đầu và chốt phiên bản giá -------------
 CREATE OR REPLACE FUNCTION fn_session_validate() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 DECLARE
@@ -543,15 +755,29 @@ DECLARE
     v_eq_status  VARCHAR(20);
     v_res        reservation%ROWTYPE;
 BEGIN
-    SELECT space_identifier, equipment_status_code
-      INTO v_space, v_eq_status
-    FROM charging_equipment
-    WHERE equipment_identifier = NEW.equipment_identifier;
+    IF num_nonnulls(NEW.equipment_identifier, NEW.space_identifier) <> 1 THEN
+        RAISE EXCEPTION 'A session uses either a charger or a parking-only space'
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'ck_service_session_kind';
+    END IF;
 
-    IF v_eq_status IN ('FAULT', 'MAINTENANCE') THEN
-        RAISE EXCEPTION 'Charger % is not available (%)',
-            NEW.equipment_identifier, v_eq_status
-            USING ERRCODE = 'check_violation';
+    IF NEW.equipment_identifier IS NOT NULL THEN
+        SELECT space_identifier, equipment_status_code
+          INTO v_space, v_eq_status
+        FROM charging_equipment
+        WHERE equipment_identifier = NEW.equipment_identifier;
+
+        IF v_eq_status IN ('FAULT', 'MAINTENANCE') THEN
+            RAISE EXCEPTION 'Charger % is not available (%)',
+                NEW.equipment_identifier, v_eq_status
+                USING ERRCODE = 'check_violation';
+        END IF;
+    ELSE
+        v_space := NEW.space_identifier;
+        IF EXISTS (SELECT 1 FROM charging_equipment
+                   WHERE space_identifier = v_space AND deleted_datetime IS NULL) THEN
+            RAISE EXCEPTION 'A charging space is used through its charger'
+                USING ERRCODE = 'check_violation';
+        END IF;
     END IF;
 
     IF EXISTS (SELECT 1 FROM vehicle AS v
@@ -559,11 +785,13 @@ BEGIN
                WHERE v.vehicle_identifier = NEW.vehicle_identifier
                  AND (v.deleted_datetime IS NOT NULL OR u.deleted_datetime IS NOT NULL))
        OR EXISTS (SELECT 1 FROM charging_equipment AS ce
-                  JOIN parking_space AS s ON s.space_identifier = ce.space_identifier
                   WHERE ce.equipment_identifier = NEW.equipment_identifier
-                    AND (ce.deleted_datetime IS NOT NULL
-                         OR s.deleted_datetime IS NOT NULL)) THEN
-        RAISE EXCEPTION 'Vehicle, charger or space has been removed'
+                    AND ce.deleted_datetime IS NOT NULL)
+       OR EXISTS (SELECT 1 FROM parking_space AS s
+                  WHERE s.space_identifier = v_space
+                    AND (s.deleted_datetime IS NOT NULL
+                         OR s.availability_status_code = 'OUTOFSERVICE')) THEN
+        RAISE EXCEPTION 'Vehicle, charger or space has been removed or is out of service'
             USING ERRCODE = 'check_violation';
     END IF;
 
@@ -611,11 +839,18 @@ BEGIN
         END IF;
     END IF;
 
-    -- chốt đơn giá tại thời điểm bắt đầu (bỏ qua giá trị do người gọi gửi lên)
-    SELECT t.price_per_kwh_value, t.overtime_fee_per_hour_value
-      INTO NEW.applied_price_per_kwh_value, NEW.applied_overtime_fee_per_hour_value
-    FROM tariff_rate AS t
-    WHERE t.rate_identifier = fn_select_tariff(NEW.equipment_identifier, NEW.start_datetime);
+    -- chốt phiên bản giá có hiệu lực lúc bắt đầu (bỏ qua giá trị người gọi gửi lên)
+    IF NEW.equipment_identifier IS NOT NULL THEN
+        NEW.rate_identifier := fn_select_tariff(NEW.equipment_identifier, NEW.start_datetime);
+        NEW.parking_rate_identifier := NULL;
+    ELSE
+        NEW.parking_rate_identifier := fn_select_parking_rate(NEW.start_datetime);
+        NEW.rate_identifier := NULL;
+    END IF;
+    IF NEW.rate_identifier IS NULL AND NEW.parking_rate_identifier IS NULL THEN
+        RAISE EXCEPTION 'No price covers this session at %', NEW.start_datetime
+            USING ERRCODE = 'no_data_found';
+    END IF;
     RETURN NEW;
 END $$;
 
@@ -627,12 +862,15 @@ CREATE TRIGGER trg_session_validate
 CREATE OR REPLACE FUNCTION fn_session_start() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
-    UPDATE charging_equipment SET equipment_status_code = 'CHARGING'
-    WHERE equipment_identifier = NEW.equipment_identifier;
+    IF NEW.equipment_identifier IS NOT NULL THEN
+        UPDATE charging_equipment SET equipment_status_code = 'CHARGING'
+        WHERE equipment_identifier = NEW.equipment_identifier;
+    END IF;
 
     UPDATE parking_space SET availability_status_code = 'OCCUPIED'
-    WHERE space_identifier = (SELECT space_identifier FROM charging_equipment
-                              WHERE equipment_identifier = NEW.equipment_identifier);
+    WHERE space_identifier = coalesce(NEW.space_identifier,
+                                      (SELECT space_identifier FROM charging_equipment
+                                       WHERE equipment_identifier = NEW.equipment_identifier));
 
     IF NEW.reservation_identifier IS NOT NULL THEN
         UPDATE reservation SET reservation_status_code = 'FULFILLED'
@@ -649,13 +887,13 @@ CREATE TRIGGER trg_session_start
 CREATE OR REPLACE FUNCTION fn_session_immutable() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION 'A finished charging session cannot be changed'
+    RAISE EXCEPTION 'A finished session cannot be changed'
         USING ERRCODE = 'restrict_violation';
 END $$;
 
 CREATE TRIGGER trg_session_immutable
-    BEFORE UPDATE OF vehicle_identifier, equipment_identifier, start_datetime,
-                     end_datetime, fully_charged_datetime,
+    BEFORE UPDATE OF vehicle_identifier, equipment_identifier, space_identifier,
+                     start_datetime, end_datetime, fully_charged_datetime,
                      peak_charging_power_kw, consumed_energy_kwh
     ON service_session
     FOR EACH ROW
@@ -667,45 +905,48 @@ CREATE OR REPLACE FUNCTION fn_session_finish() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 DECLARE
     v_rate     tariff_rate%ROWTYPE;
-    v_rate_id  UUID;
-    v_energy   DECIMAL(12,2);
+    v_hourly   DECIMAL(10,2);
+    v_energy   DECIMAL(12,2) := 0;
     v_overtime DECIMAL(12,2) := 0;
+    v_parking  DECIMAL(12,2) := 0;
 BEGIN
     -- giải phóng thiết bị (không ghi đè FAULT / MAINTENANCE / OUTOFSERVICE)
-    UPDATE charging_equipment SET equipment_status_code = 'READY'
-    WHERE equipment_identifier = NEW.equipment_identifier
-      AND equipment_status_code = 'CHARGING';
+    IF NEW.equipment_identifier IS NOT NULL THEN
+        UPDATE charging_equipment SET equipment_status_code = 'READY'
+        WHERE equipment_identifier = NEW.equipment_identifier
+          AND equipment_status_code = 'CHARGING';
+    END IF;
 
     UPDATE parking_space SET availability_status_code = 'AVAILABLE'
-    WHERE space_identifier = (SELECT space_identifier FROM charging_equipment
-                              WHERE equipment_identifier = NEW.equipment_identifier)
+    WHERE space_identifier = coalesce(NEW.space_identifier,
+                                      (SELECT space_identifier FROM charging_equipment
+                                       WHERE equipment_identifier = NEW.equipment_identifier))
       AND availability_status_code = 'OCCUPIED';
 
-    -- lập hóa đơn
-    v_rate_id := fn_select_tariff(NEW.equipment_identifier, NEW.start_datetime);
-    IF v_rate_id IS NULL THEN
-        RAISE EXCEPTION 'No tariff covers charger % at %',
-            NEW.equipment_identifier, NEW.start_datetime
-            USING ERRCODE = 'no_data_found';
-    END IF;
-    SELECT * INTO v_rate FROM tariff_rate WHERE rate_identifier = v_rate_id;
-
-    v_energy := round(NEW.consumed_energy_kwh
-                      * coalesce(NEW.applied_price_per_kwh_value, v_rate.price_per_kwh_value), 2);
-    IF NEW.fully_charged_datetime IS NOT NULL THEN
-        v_overtime := round(
-            greatest(0, extract(epoch FROM (NEW.end_datetime
-                                            - NEW.fully_charged_datetime)) / 3600.0)
-            * coalesce(NEW.applied_overtime_fee_per_hour_value,
-                       v_rate.overtime_fee_per_hour_value), 2);
+    -- lập hóa đơn theo phiên bản giá đã chốt lúc bắt đầu
+    IF NEW.equipment_identifier IS NOT NULL THEN
+        SELECT * INTO v_rate FROM tariff_rate WHERE rate_identifier = NEW.rate_identifier;
+        v_energy := round(NEW.consumed_energy_kwh * v_rate.price_per_kwh_value, 2);
+        IF NEW.fully_charged_datetime IS NOT NULL THEN
+            v_overtime := round(
+                greatest(0, extract(epoch FROM (NEW.end_datetime
+                                                - NEW.fully_charged_datetime)) / 3600.0)
+                * v_rate.overtime_fee_per_hour_value, 2);
+        END IF;
+    ELSE
+        -- chỉ đỗ xe: số giờ đỗ x giá theo giờ
+        SELECT price_per_hour_value INTO v_hourly
+        FROM parking_rate WHERE parking_rate_identifier = NEW.parking_rate_identifier;
+        v_parking := round(extract(epoch FROM (NEW.end_datetime - NEW.start_datetime))
+                           / 3600.0 * v_hourly, 2);
     END IF;
 
     INSERT INTO payment_transaction
-        (session_identifier, rate_identifier, energy_amount_value,
-         overtime_amount_value, transaction_amount_value)
+        (session_identifier, energy_amount_value, overtime_amount_value,
+         parking_amount_value, transaction_amount_value)
     VALUES
-        (NEW.session_identifier, v_rate_id, v_energy,
-         v_overtime, v_energy + v_overtime);
+        (NEW.session_identifier, v_energy, v_overtime,
+         v_parking, v_energy + v_overtime + v_parking);
     RETURN NEW;
 END $$;
 
@@ -724,9 +965,9 @@ BEGIN
             USING ERRCODE = 'restrict_violation';
     END IF;
     IF NEW.session_identifier <> OLD.session_identifier
-       OR NEW.rate_identifier <> OLD.rate_identifier
        OR NEW.energy_amount_value <> OLD.energy_amount_value
        OR NEW.overtime_amount_value <> OLD.overtime_amount_value
+       OR NEW.parking_amount_value <> OLD.parking_amount_value
        OR NEW.transaction_amount_value <> OLD.transaction_amount_value
        OR NEW.currency_code <> OLD.currency_code
        OR (NEW.customer_name_text, NEW.customer_phone_number,
@@ -762,8 +1003,9 @@ BEGIN
         IF NEW.confirmed_by_identifier IS NULL OR NOT EXISTS (
                SELECT 1
                FROM service_session AS ss
-               JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-               JOIN parking_space AS s ON s.space_identifier = ce.space_identifier
+               LEFT JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
+               JOIN parking_space AS s
+                 ON s.space_identifier = coalesce(ss.space_identifier, ce.space_identifier)
                JOIN facility_manager AS fm ON fm.facility_identifier = s.facility_identifier
                JOIN user_account AS u ON u.account_identifier = fm.manager_identifier
                WHERE ss.session_identifier = NEW.session_identifier
@@ -978,29 +1220,29 @@ CREATE TRIGGER trg_reservation_fixed
     ON reservation
     FOR EACH ROW EXECUTE FUNCTION fn_reservation_fixed();
 
--- ---- T11: phiên sạc không xóa được; xe, trụ, giờ bắt đầu, giá chốt cố định --
+-- ---- T11: phiên không xóa được; xe, trụ/ô, giờ bắt đầu, phiên bản giá cố định
 CREATE OR REPLACE FUNCTION fn_session_fixed() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'UPDATE' THEN
-        IF (NEW.vehicle_identifier, NEW.equipment_identifier, NEW.start_datetime,
-            NEW.applied_price_per_kwh_value, NEW.applied_overtime_fee_per_hour_value,
+        IF (NEW.vehicle_identifier, NEW.equipment_identifier, NEW.space_identifier,
+            NEW.start_datetime, NEW.rate_identifier, NEW.parking_rate_identifier,
             NEW.start_battery_percent)
            IS NOT DISTINCT FROM
-           (OLD.vehicle_identifier, OLD.equipment_identifier, OLD.start_datetime,
-            OLD.applied_price_per_kwh_value, OLD.applied_overtime_fee_per_hour_value,
+           (OLD.vehicle_identifier, OLD.equipment_identifier, OLD.space_identifier,
+            OLD.start_datetime, OLD.rate_identifier, OLD.parking_rate_identifier,
             OLD.start_battery_percent) THEN
             RETURN NEW;
         END IF;
     END IF;
     -- phiên có hóa đơn đã được khóa ngoại RESTRICT bảo vệ, ở đây chặn mọi phiên
-    RAISE EXCEPTION 'Charging session records cannot be deleted or re-pointed'
+    RAISE EXCEPTION 'Session records cannot be deleted or re-pointed'
         USING ERRCODE = 'restrict_violation';
 END $$;
 
 CREATE TRIGGER trg_session_fixed
-    BEFORE DELETE OR UPDATE OF vehicle_identifier, equipment_identifier, start_datetime,
-                     applied_price_per_kwh_value, applied_overtime_fee_per_hour_value,
+    BEFORE DELETE OR UPDATE OF vehicle_identifier, equipment_identifier, space_identifier,
+                     start_datetime, rate_identifier, parking_rate_identifier,
                      start_battery_percent
     ON service_session
     FOR EACH ROW EXECUTE FUNCTION fn_session_fixed();
@@ -1014,6 +1256,9 @@ DECLARE
     v_battery DECIMAL(10,2);
     v_power   DECIMAL(10,2);
 BEGIN
+    IF NEW.equipment_identifier IS NULL THEN
+        RETURN NEW;          -- phiên chỉ đỗ xe không có điện năng (ck_service_session_kind)
+    END IF;
     SELECT battery_capacity_kwh INTO v_battery
     FROM vehicle WHERE vehicle_identifier = NEW.vehicle_identifier;
     SELECT max_power_kw INTO v_power
@@ -1068,7 +1313,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM service_session
                WHERE session_identifier = NEW.session_identifier
                  AND end_datetime IS NULL) THEN
-        RAISE EXCEPTION 'Cannot invoice a charging session that is still open'
+        RAISE EXCEPTION 'Cannot invoice a session that is still open'
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -1082,12 +1327,8 @@ CREATE TRIGGER trg_payment_requires_end
 CREATE OR REPLACE FUNCTION fn_space_removal() RETURNS TRIGGER
 LANGUAGE plpgsql AS $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM service_session AS s
-               JOIN charging_equipment AS ce
-                 ON ce.equipment_identifier = s.equipment_identifier
-               WHERE ce.space_identifier = OLD.space_identifier
-                 AND s.end_datetime IS NULL) THEN
-        RAISE EXCEPTION 'A space with an open charging session cannot be removed'
+    IF fn_space_has_open_session(OLD.space_identifier) THEN
+        RAISE EXCEPTION 'A space with an open session cannot be removed'
             USING ERRCODE = 'check_violation';
     END IF;
     UPDATE reservation SET reservation_status_code = 'CANCELLED'
@@ -1133,12 +1374,8 @@ LANGUAGE sql AS $$
     WHERE p.availability_status_code = 'AVAILABLE'
       AND EXISTS (SELECT 1 FROM reservation r
                   WHERE r.space_identifier = p.space_identifier
-                    AND (r.reservation_status_code = 'CONFIRMED'
-                             AND CURRENT_TIMESTAMP >= r.start_datetime
-                         OR r.reservation_status_code = 'FULFILLED'
-                             AND NOT EXISTS (SELECT 1 FROM charging_equipment c
-                                             WHERE c.space_identifier = p.space_identifier
-                                               AND c.deleted_datetime IS NULL))
+                    AND r.reservation_status_code = 'CONFIRMED'
+                    AND CURRENT_TIMESTAMP >= r.start_datetime
                     AND r.deleted_datetime IS NULL
                     AND CURRENT_TIMESTAMP <  r.end_datetime);
 
@@ -1146,12 +1383,8 @@ LANGUAGE sql AS $$
     WHERE p.availability_status_code = 'RESERVED'
       AND NOT EXISTS (SELECT 1 FROM reservation r
                       WHERE r.space_identifier = p.space_identifier
-                        AND (r.reservation_status_code = 'CONFIRMED'
-                                 AND CURRENT_TIMESTAMP >= r.start_datetime
-                             OR r.reservation_status_code = 'FULFILLED'
-                                 AND NOT EXISTS (SELECT 1 FROM charging_equipment c
-                                                 WHERE c.space_identifier = p.space_identifier
-                                                   AND c.deleted_datetime IS NULL))
+                        AND r.reservation_status_code = 'CONFIRMED'
+                        AND CURRENT_TIMESTAMP >= r.start_datetime
                         AND r.deleted_datetime IS NULL
                         AND CURRENT_TIMESTAMP <  r.end_datetime);
 $$;
@@ -1171,11 +1404,7 @@ LANGUAGE sql STABLE AS $$
        AND NOT (
                p_start_datetime < CURRENT_TIMESTAMP + INTERVAL '30 minutes'
                AND p_end_datetime > CURRENT_TIMESTAMP
-               AND EXISTS (SELECT 1 FROM service_session AS s
-                           JOIN charging_equipment AS ce
-                             ON ce.equipment_identifier = s.equipment_identifier
-                           WHERE ce.space_identifier = p_space_identifier
-                             AND s.end_datetime IS NULL))
+               AND fn_space_has_open_session(p_space_identifier))
        AND NOT EXISTS (
                SELECT 1 FROM reservation
                WHERE space_identifier = p_space_identifier

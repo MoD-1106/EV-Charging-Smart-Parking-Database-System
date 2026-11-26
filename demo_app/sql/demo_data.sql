@@ -37,10 +37,21 @@ BEGIN
         WHERE session_identifier = v_session;
         IF d > 1 THEN   -- phiên mới nhất để chờ thanh toán
             UPDATE payment_transaction
-            SET transaction_status_code = 'SUCCESS', payment_method_code = 'E_WALLET',
+            SET transaction_status_code = 'PROCESSING', payment_method_code = 'E_WALLET',
                 gateway_reference_identifier = 'DEMO-SEED-' || d,
                 created_datetime = v_start + INTERVAL '1 hour'
             WHERE session_identifier = v_session;
+            -- quản lý bãi xác nhận khoản đã trả
+            UPDATE payment_transaction AS p
+            SET transaction_status_code = 'SUCCESS',
+                confirmed_by_identifier = (
+                    SELECT min(fm.manager_identifier::TEXT)::UUID
+                    FROM charging_equipment AS ce
+                    JOIN parking_space AS s ON s.space_identifier = ce.space_identifier
+                    JOIN facility_manager AS fm ON fm.facility_identifier = s.facility_identifier
+                    WHERE ce.equipment_identifier = v_charger),
+                confirmed_datetime = v_start + INTERVAL '75 minutes'
+            WHERE p.session_identifier = v_session;
         END IF;
     END LOOP;
 END $$;
