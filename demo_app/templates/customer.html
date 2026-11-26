@@ -17,6 +17,21 @@
   <p class="muted small" style="margin-top:10px">Tạm tính theo công suất trụ × thời gian × hiệu suất 90 %, từ % pin lúc cắm sạc đến khi đầy. Hóa đơn chính thức do hệ thống lập khi phiên kết thúc.</p>
 </section>
 {% endif %}
+{% if parking %}
+<section class="panel">
+  <h2>Xe đang đỗ</h2>
+  <div class="list">
+  {% for x in parking %}
+    <div class="sess">
+      <div class="kv" style="padding-top:0"><b class="mono">{{ x.plate }} · {{ x.code }}</b><span class="muted small">{{ x.facility.replace('EV Hub ', '') }} · từ {{ x.since }}</span></div>
+      <div class="kv"><span>Giá đỗ <span class="pill {{ x.band }}">{{ BAND_NAME[x.band] }}</span></span><span class="mono">{{ x.hourly|vnd }}/giờ</span></div>
+      <div class="kv"><span>Tạm tính đến giờ</span><b class="mono">{{ x.so_far|vnd }}</b></div>
+    </div>
+  {% endfor %}
+  </div>
+  <p class="muted small" style="margin-top:10px">Phí đỗ = số giờ đỗ × giá theo giờ của khung lúc bắt đầu đỗ. Hóa đơn lập khi quản lý ghi nhận xe rời bãi.</p>
+</section>
+{% endif %}
 <section class="panel">
   <h2>Tìm và đặt chỗ</h2>
   <form method="get" class="row" id="search-form" data-start-ms="{{ start_ms if start_ms is not none else '' }}" data-end-ms="{{ end_ms if end_ms is not none else '' }}" data-minutes="{{ minutes }}">
@@ -33,7 +48,8 @@
       <div class="head"><span class="id">{{ s.code }}</span><span class="pill {{ 'AVAILABLE' if s.free else 'OUTOFSERVICE' }}">{{ 'Trống' if s.free else 'Bận' }}</span></div>
       <div class="muted small">{% if s.conn %}{{ 'DC' if s.conn == 'FAST_DC' else 'AC' }} {{ s.kw|int }} kW{% else %}Chỉ đỗ xe{% endif %}</div>
       {% if s.price is not none %}<div class="small"><span class="pill {{ s.band }}">{{ BAND_NAME[s.band] }}</span> <span class="mono">{{ s.price|vnd }}/kWh</span></div>
-      <div class="muted small">Quá giờ: {{ s.ot|vnd }}/giờ</div>{% endif %}
+      <div class="muted small">Quá giờ: {{ s.ot|vnd }}/giờ</div>
+      {% elif s.hourly is not none %}<div class="small"><span class="pill {{ s.band }}">{{ BAND_NAME[s.band] }}</span> <span class="mono">{{ s.hourly|vnd }}/giờ</span></div>{% endif %}
       {% if s.free %}
       <div class="small js-preview" data-kw="{{ s.kw if s.conn else 0 }}" data-price="{{ s.price if s.price is not none else '' }}"></div>
       <form method="post" action="{{ url_for('customer_book') }}" class="acts">
@@ -75,7 +91,8 @@
   {% for i in invoices %}
     <div style="border:1px solid var(--line);border-radius:8px;padding:10px 12px">
       <div class="kv" style="padding-top:0"><b class="mono">{{ i.day_text }} · {{ i.plate }}</b><span class="pill {{ i.status }}">{{ PAY_NAME[i.status] }}</span></div>
-      <div class="kv"><span>Điện năng {{ '%.1f'|format(i.kwh) }} kWh</span><span class="mono">{{ i.energy|vnd }}</span></div>
+      {% if i.parking_only %}<div class="kv"><span>Phí đỗ xe</span><span class="mono">{{ i.parking|vnd }}</span></div>
+      {% else %}<div class="kv"><span>Điện năng {{ '%.1f'|format(i.kwh) }} kWh</span><span class="mono">{{ i.energy|vnd }}</span></div>{% endif %}
       {% if i.overtime %}<div class="kv"><span>Phí quá giờ</span><span class="mono">{{ i.overtime|vnd }}</span></div>{% endif %}
       <div class="kv"><b>Tổng</b><b class="mono">{{ i.total|vnd }}</b></div>
       {% if i.status in ('PENDING', 'FAILED') %}

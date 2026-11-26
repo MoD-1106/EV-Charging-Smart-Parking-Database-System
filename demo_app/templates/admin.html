@@ -14,13 +14,27 @@
 {% for r in revenue %}<tr><td>{{ r.facility.replace('EV Hub ', '') }}</td><td><span class="pill {{ r.band }}">{{ BAND_NAME[r.band] }}</span></td><td class="r mono">{{ r.invoices }}</td><td class="r mono">{{ r.revenue|vnd }}</td></tr>{% else %}<tr><td colspan="4" class="muted">Chưa có dữ liệu.</td></tr>{% endfor %}
 </tbody></table></div></section>
 {% elif tab == 'tariff' %}
-<section class="panel"><h2>Biểu giá (tariff_rate)</h2><div class="scroll"><table><thead><tr><th>Cổng</th><th>Dải kW</th><th>Khung</th><th>Giờ</th><th class="r">Giá / kWh</th><th class="r">Quá giờ / giờ</th><th></th></tr></thead><tbody>
+<section class="panel"><h2>Lịch khung giờ (time_band_window)</h2><p class="muted">Khai báo một lần cho mọi loại cổng; giờ địa phương Asia/Ho_Chi_Minh.</p><div class="scroll"><table><thead><tr><th>Giờ</th><th>Khung</th></tr></thead><tbody>
+{% for w in windows %}<tr><td class="mono">{{ w.from_text }}–{{ w.to_text }}</td><td><span class="pill {{ w.band }}">{{ BAND_NAME[w.band] }}</span></td></tr>
+{% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h2>Biểu giá sạc (tariff_rate)</h2><p class="muted">Giá đang áp dụng cho mỗi loại cổng, dải công suất và khung. Phí quá giờ có thể khác nhau theo loại trụ. Lưu giá mới sẽ đóng phiên bản hiện tại và mở phiên bản mới từ bây giờ; phiên đã bắt đầu và hóa đơn cũ giữ phiên bản cũ.</p><div class="scroll"><table><thead><tr><th>Cổng</th><th>Dải kW</th><th>Khung</th><th>Hiệu lực từ</th><th class="r">Giá / kWh</th><th class="r">Quá giờ / giờ</th><th></th></tr></thead><tbody>
 {% for t in tariffs %}<tr>
-  <td class="mono">{{ t.conn }}</td><td class="mono">{{ '%g'|format(t.min_kw) }}–{{ '%g'|format(t.max_kw) }}</td><td><span class="pill {{ t.band }}">{{ BAND_NAME[t.band] }}</span></td><td class="mono">{{ t.from_text }}–{{ t.to_text }}</td>
+  <td class="mono">{{ t.conn }}</td><td class="mono">{{ '%g'|format(t.min_kw) }}–{{ '%g'|format(t.max_kw) }}</td><td><span class="pill {{ t.band }}">{{ BAND_NAME[t.band] }}</span></td><td class="mono small">{{ t.from_text }}</td>
   <td class="r"><input class="mono" form="tf{{ loop.index }}" name="price" type="number" min="0" step="100" value="{{ '%g'|format(t.price) }}" aria-label="Giá mỗi kWh"></td>
   <td class="r"><input class="mono" form="tf{{ loop.index }}" name="overtime" type="number" min="0" step="1000" value="{{ '%g'|format(t.overtime) }}" aria-label="Phí quá giờ"></td>
   <td><form id="tf{{ loop.index }}" method="post" action="{{ url_for('admin_tariff') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ t.id }}"><button class="btn sm" type="submit">Lưu</button></form></td></tr>
 {% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h2>Giá đỗ xe theo giờ (parking_rate)</h2><p class="muted">Áp dụng cho ô không có trụ sạc, theo khung của giờ xe vào bãi.</p><div class="scroll"><table><thead><tr><th>Khung</th><th>Hiệu lực từ</th><th class="r">Giá / giờ</th><th></th></tr></thead><tbody>
+{% for r in parking_rates %}<tr><td><span class="pill {{ r.band }}">{{ BAND_NAME[r.band] }}</span></td><td class="mono small">{{ r.from_text }}</td>
+  <td class="r"><input class="mono" form="pf{{ loop.index }}" name="hourly" type="number" min="0" step="1000" value="{{ '%g'|format(r.hourly) }}" aria-label="Giá đỗ mỗi giờ"></td>
+  <td><form id="pf{{ loop.index }}" method="post" action="{{ url_for('admin_tariff') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="kind" value="parking"><input type="hidden" name="id" value="{{ r.id }}"><button class="btn sm" type="submit">Lưu</button></form></td></tr>
+{% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h2>Lịch sử giá</h2><p class="muted">Các phiên bản đã hết hiệu lực (mới nhất trước).</p><div class="scroll"><table><thead><tr><th>Mục</th><th>Khung</th><th class="r">Giá</th><th>Từ</th><th>Đến</th></tr></thead><tbody>
+{% for h in history %}<tr><td class="mono">{{ h.item }}</td><td><span class="pill {{ h.band }}">{{ BAND_NAME[h.band] }}</span></td><td class="r mono">{{ h.price|vnd }}/{{ h.unit }}</td><td class="mono small">{{ h.from_text }}</td><td class="mono small">{{ h.to_text }}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">Chưa đổi giá lần nào.</td></tr>{% endfor %}
 </tbody></table></div></section>
 {% elif tab == 'facilities' %}
 <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
@@ -82,8 +96,8 @@
   <p class="muted small">Bạn tự đặt mật khẩu và gửi cho người dùng. Mật khẩu hiện trong danh sách tài khoản.</p></form></aside>
 </div>
 {% else %}
-<section class="panel"><h2>Giao dịch gần nhất</h2><div class="scroll"><table><thead><tr><th>Thời điểm</th><th>Khách</th><th>Xe</th><th>Khung</th><th class="r">Điện năng</th><th class="r">Quá giờ</th><th class="r">Tổng</th><th>Trạng thái</th></tr></thead><tbody>
-{% for i in invoices %}<tr><td class="mono">{{ i.day_text }}</td><td>{{ i.customer }}</td><td class="mono">{{ i.plate }}</td><td><span class="pill {{ i.band }}">{{ BAND_NAME[i.band] }}</span></td><td class="r mono">{{ i.energy|vnd }}</td><td class="r mono">{{ i.overtime|vnd }}</td><td class="r mono"><b>{{ i.total|vnd }}</b></td><td><span class="pill {{ i.status }}">{{ PAY_NAME[i.status] }}</span></td></tr>{% endfor %}
-</tbody></table></div><p class="muted small" style="margin-top:10px">Số tiền, ô giá và phiên của hóa đơn không sửa được; hóa đơn không xóa được (trg_payment_immutable).</p></section>
+<section class="panel"><h2>Giao dịch gần nhất</h2><div class="scroll"><table><thead><tr><th>Thời điểm</th><th>Khách</th><th>Xe</th><th>Khung</th><th class="r">Điện năng</th><th class="r">Quá giờ</th><th class="r">Đỗ xe</th><th class="r">Tổng</th><th>Trạng thái</th></tr></thead><tbody>
+{% for i in invoices %}<tr><td class="mono">{{ i.day_text }}</td><td>{{ i.customer }}</td><td class="mono">{{ i.plate }}</td><td><span class="pill {{ i.band }}">{{ BAND_NAME[i.band] }}</span></td><td class="r mono">{{ i.energy|vnd }}</td><td class="r mono">{{ i.overtime|vnd }}</td><td class="r mono">{{ i.parking|vnd }}</td><td class="r mono"><b>{{ i.total|vnd }}</b></td><td><span class="pill {{ i.status }}">{{ PAY_NAME[i.status] }}</span></td></tr>{% endfor %}
+</tbody></table></div><p class="muted small" style="margin-top:10px">Số tiền và phiên của hóa đơn không sửa được; phiên trỏ tới phiên bản giá đã áp dụng; hóa đơn không xóa được (trg_payment_immutable).</p></section>
 {% endif %}
 {% endblock %}

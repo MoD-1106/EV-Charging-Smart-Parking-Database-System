@@ -13,17 +13,21 @@
     <div class="kv"><span>Khách hàng</span><b>{{ invoice.customer }}</b></div>
     <div class="kv"><span>Điện thoại</span><span class="mono">{{ invoice.phone }}</span></div>
     <div class="kv"><span>Biển số</span><b class="mono">{{ invoice.plate }}</b></div>
-    <div class="kv"><span>Bãi · ô · trụ</span><span>{{ invoice.facility.replace('EV Hub ', '') }} · {{ invoice.code }} · <span class="mono">{{ invoice.evse }}</span> ({{ invoice.kw|int }} kW)</span></div>
+    {% if invoice.parking_only %}<div class="kv"><span>Bãi · ô</span><span>{{ invoice.facility.replace('EV Hub ', '') }} · {{ invoice.code }} (chỉ đỗ xe)</span></div>
+    <div class="kv"><span>Vào → ra</span><span class="mono">{{ invoice.start_text }} → {{ invoice.end_text }} ({{ invoice.minutes }} phút)</span></div>
+    {% else %}<div class="kv"><span>Bãi · ô · trụ</span><span>{{ invoice.facility.replace('EV Hub ', '') }} · {{ invoice.code }} · <span class="mono">{{ invoice.evse }}</span> ({{ invoice.kw|int }} kW)</span></div>
     <div class="kv"><span>Bắt đầu → kết thúc</span><span class="mono">{{ invoice.start_text }} → {{ invoice.end_text }} ({{ invoice.minutes }} phút)</span></div>
     <div class="kv"><span>Pin</span><span class="mono">{{ '%g'|format(invoice.pct_start) }}% → {{ '%g'|format(invoice.pct_end) }}%</span></div>
-    <div class="kv"><span>Pin đầy lúc</span><span class="mono">{{ invoice.full_text or 'Chưa đầy' }}</span></div>
+    <div class="kv"><span>Pin đầy lúc</span><span class="mono">{{ invoice.full_text or 'Chưa đầy' }}</span></div>{% endif %}
   </div>
   <div>
     <div class="kv"><span>Khung giá</span><span class="pill {{ invoice.band }}">{{ BAND_NAME[invoice.band] }}</span></div>
-    <div class="kv"><span>Điện năng</span><span class="mono">{{ '%.2f'|format(invoice.kwh) }} kWh × {{ invoice.price|vnd }}</span></div>
+    {% if invoice.parking_only %}<div class="kv"><span>Thời gian đỗ</span><span class="mono">{{ '%.2f'|format(invoice.hours) }} giờ × {{ invoice.hourly|vnd }}</span></div>
+    <div class="kv"><span>Phí đỗ xe</span><b class="mono">{{ invoice.parking|vnd }}</b></div>
+    {% else %}<div class="kv"><span>Điện năng</span><span class="mono">{{ '%.2f'|format(invoice.kwh) }} kWh × {{ invoice.price|vnd }}</span></div>
     <div class="kv"><span>Tiền điện</span><b class="mono">{{ invoice.energy|vnd }}</b></div>
     <div class="kv"><span>Quá giờ</span><span class="mono">{{ '%.2f'|format(invoice.overtime_hours) }} giờ × {{ invoice.fee|vnd }}</span></div>
-    <div class="kv"><span>Phí quá giờ</span><b class="mono">{{ invoice.overtime|vnd }}</b></div>
+    <div class="kv"><span>Phí quá giờ</span><b class="mono">{{ invoice.overtime|vnd }}</b></div>{% endif %}
     <div class="kv" style="font-size:1.1em"><b>Tổng cộng</b><b class="mono">{{ invoice.total|vnd }}</b></div>
     <div class="kv"><span>Trạng thái</span><span class="pill {{ invoice.status }}">{{ PAY_NAME[invoice.status] }}</span></div>
     <div class="kv"><span>Lập lúc</span><span class="mono">{{ invoice.created_text }}</span></div>
@@ -57,17 +61,22 @@
   <div class="sp {{ 'off' if s.status == 'OUTOFSERVICE' }}">
     <div class="head"><span class="id">{{ s.code }}</span><span class="pill {{ s.status }}">{{ STATUS_NAME[s.status] }}</span></div>
     <div class="muted small">{% if s.conn %}{{ 'DC' if s.conn == 'FAST_DC' else 'AC' }} {{ s.kw|int }} kW · {{ s.eq_status }}{% else %}Chỉ đỗ xe{% endif %}</div>
-    {% if s.plate %}<div class="small mono">{{ s.plate }} · pin {{ '%.1f'|format(s.pct_now) }}% · {{ '%.1f'|format(s.kwh) }} kWh · đã sạc <span data-live="elapsed" data-ms="{{ s.since_ms }}">{{ s.since }}</span> (từ {{ s.since }})</div>
+    {% if s.plate and s.parked %}<div class="small mono">{{ s.plate }} · đỗ <span data-live="elapsed" data-ms="{{ s.since_ms }}">{{ s.since }}</span> (từ {{ s.since }})</div>
+    {% elif s.plate %}<div class="small mono">{{ s.plate }} · pin {{ '%.1f'|format(s.pct_now) }}% · {{ '%.1f'|format(s.kwh) }} kWh · đã sạc <span data-live="elapsed" data-ms="{{ s.since_ms }}">{{ s.since }}</span> (từ {{ s.since }})</div>
     <div class="muted small">{% if s.full_text %}Đã đầy lúc {{ s.full_text }}, đang tính phí quá giờ{% elif s.eta_text %}Dự kiến đầy lúc {{ s.eta_text }}{% endif %}</div>{% endif %}
     {% if s.next_booking %}<div class="muted small">Đặt kế tiếp {{ s.next_booking }} (<span data-live="until" data-ms="{{ s.next_ms }}"></span>)</div>{% endif %}
     {% if s.session_id %}
     <form method="post" action="{{ url_for('manager_session_stop') }}" class="acts"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.session_id }}"><input type="hidden" name="fac" value="{{ fac_id }}">
-      <button class="btn sm" type="submit">Kết thúc sạc</button></form>
+      <button class="btn sm" type="submit">{{ 'Xe rời bãi' if s.parked else 'Kết thúc sạc' }}</button></form>
     {% elif s.eq_id and s.eq_status == 'READY' and s.status != 'OUTOFSERVICE' %}
     <form method="post" action="{{ url_for('manager_session_start') }}" class="acts"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.eq_id }}"><input type="hidden" name="fac" value="{{ fac_id }}">
       <input class="mini mono" name="plate" list="plates" required maxlength="20" autocomplete="off" placeholder="Biển số" aria-label="Biển số xe" value="{{ s.due_plate or '' }}">
       <input class="mini" name="pct" type="number" min="0" max="99" step="1" required placeholder="% pin" aria-label="% pin lúc cắm sạc">
       <button class="btn sm" type="submit">Bắt đầu sạc</button></form>
+    {% elif not s.eq_id and s.status != 'OUTOFSERVICE' %}
+    <form method="post" action="{{ url_for('manager_parking_start') }}" class="acts"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="space" value="{{ s.space_id }}"><input type="hidden" name="fac" value="{{ fac_id }}">
+      <input class="mini mono" name="plate" list="plates" required maxlength="20" autocomplete="off" placeholder="Biển số" aria-label="Biển số xe" value="{{ s.due_plate or '' }}">
+      <button class="btn sm" type="submit">Xe vào đỗ</button></form>
     {% endif %}
     {% if s.eq_id and s.eq_status != 'CHARGING' %}
     <form method="post" action="{{ url_for('manager_equipment') }}" class="acts"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ s.eq_id }}"><input type="hidden" name="fac" value="{{ fac_id }}">
@@ -76,7 +85,7 @@
   </div>
 {% endfor %}
 </div>
-<p class="muted small" style="margin-top:10px">Điện năng tự tính: công suất trụ × thời gian × hiệu suất 90 %, từ % pin lúc cắm đến khi đầy. Kết thúc sạc thì hóa đơn lập theo số liệu này.</p></section>
+<p class="muted small" style="margin-top:10px">Điện năng tự tính: công suất trụ × thời gian × hiệu suất 90 %, từ % pin lúc cắm đến khi đầy. Kết thúc sạc thì hóa đơn lập theo số liệu này. Ô chỉ đỗ xe tính phí theo giờ đỗ × giá theo giờ của khung lúc xe vào.</p></section>
 </div>
 <datalist id="plates">{% for v in plates %}<option value="{{ v.plate }}" label="{{ v.owner }}">{{ v.owner }}</option>{% endfor %}</datalist>
 {% endif %}

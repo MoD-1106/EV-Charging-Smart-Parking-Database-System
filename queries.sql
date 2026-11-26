@@ -39,24 +39,27 @@ LIMIT 10;
 -- Câu hỏi  : cặp bãi / khung giá nào thu hơn 1.000.000 VND
 --            từ các thanh toán thành công?
 -- Kỹ thuật : GROUP BY, SUM/COUNT/AVG, HAVING
--- Bảng     : payment_transaction, tariff_rate, service_session,
+-- Bảng     : payment_transaction, service_session, tariff_rate, parking_rate,
 --            charging_equipment, parking_space, parking_facility
+--            (phiên sạc lấy khung từ tariff_rate, phiên chỉ đỗ từ parking_rate)
 -- -----------------------------------------------------------------------------
 SELECT f.facility_name_text,
-       t.time_band_code,
+       coalesce(t.time_band_code, pr.time_band_code) AS time_band_code,
        count(*)                           AS invoice_count,
        sum(p.energy_amount_value)         AS energy_revenue,
        sum(p.overtime_amount_value)       AS overtime_revenue,
+       sum(p.parking_amount_value)        AS parking_revenue,
        sum(p.transaction_amount_value)    AS total_revenue,
        round(avg(p.transaction_amount_value), 0) AS avg_invoice
 FROM payment_transaction AS p
-JOIN tariff_rate AS t ON t.rate_identifier = p.rate_identifier
 JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
-JOIN parking_space AS s ON s.space_identifier = ce.space_identifier
+LEFT JOIN tariff_rate AS t ON t.rate_identifier = ss.rate_identifier
+LEFT JOIN parking_rate AS pr ON pr.parking_rate_identifier = ss.parking_rate_identifier
+LEFT JOIN charging_equipment AS ce ON ce.equipment_identifier = ss.equipment_identifier
+JOIN parking_space AS s ON s.space_identifier = coalesce(ss.space_identifier, ce.space_identifier)
 JOIN parking_facility AS f ON f.facility_identifier = s.facility_identifier
 WHERE p.transaction_status_code = 'SUCCESS'
-GROUP BY f.facility_name_text, t.time_band_code
+GROUP BY f.facility_name_text, coalesce(t.time_band_code, pr.time_band_code)
 HAVING sum(p.transaction_amount_value) > 1000000
 ORDER BY f.facility_name_text, total_revenue DESC;
 
@@ -169,6 +172,7 @@ WITH monthly AS (
     JOIN vehicle AS v ON v.vehicle_identifier = ss.vehicle_identifier
     JOIN user_account AS u ON u.account_identifier = v.account_identifier
     WHERE ss.end_datetime IS NOT NULL
+      AND ss.equipment_identifier IS NOT NULL      -- chỉ phiên sạc
     GROUP BY 1, u.account_identifier, u.full_name_text
 ),
 ranked AS (
@@ -252,8 +256,10 @@ ORDER BY no_show_percent DESC, total_bookings DESC;
 -- Q10. Nhu cầu theo giờ trong ngày và khung giá áp dụng (chia nhóm thời gian)
 -- Câu hỏi  : khách bắt đầu sạc vào giờ địa phương nào, và khung giá
 --            có khớp với nhu cầu không?
--- Kỹ thuật : EXTRACT(HOUR ...), CASE, GROUP BY biểu thức, phần trăm trên tổng
--- Bảng     : service_session
+-- Kỹ thuật : EXTRACT(HOUR ...), GROUP BY biểu thức, JOIN theo khoảng giờ,
+--            phần trăm trên tổng (hàm cửa sổ)
+-- Bảng     : service_session, time_band_window, time_band
+--            (khung giờ đọc từ lịch khung giờ, không viết cứng trong truy vấn)
 -- -----------------------------------------------------------------------------
 WITH by_hour AS (
     SELECT extract(hour FROM ss.start_datetime AT TIME ZONE 'Asia/Ho_Chi_Minh')::INT
@@ -261,16 +267,20 @@ WITH by_hour AS (
            count(*)                    AS session_count,
            round(avg(ss.consumed_energy_kwh), 1) AS avg_kwh
     FROM service_session AS ss
+    WHERE ss.equipment_identifier IS NOT NULL      -- chỉ phiên sạc
     GROUP BY 1
 )
 SELECT h.start_hour,
-       CASE WHEN h.start_hour BETWEEN 17 AND 19 THEN 'PEAK'
-            WHEN h.start_hour >= 22 OR h.start_hour < 5 THEN 'OFF_PEAK'
-            ELSE 'STANDARD' END AS time_band_code,
+       w.time_band_code,
+       b.time_band_name,
        h.session_count,
        h.avg_kwh,
        round(100.0 * h.session_count / sum(h.session_count) OVER (), 1) AS share_percent
 FROM by_hour AS h
+JOIN time_band_window AS w
+  ON make_time(h.start_hour, 0, 0) >= w.start_time
+ AND make_time(h.start_hour, 0, 0) <  w.end_time
+JOIN time_band AS b ON b.time_band_code = w.time_band_code
 ORDER BY h.start_hour;
 
 -- -----------------------------------------------------------------------------
@@ -306,31 +316,37 @@ WHERE ss.end_datetime IS NULL
 ORDER BY r.start_datetime;
 
 -- -----------------------------------------------------------------------------
--- Q12. Giá trung bình mỗi kWh thực thu, theo loại cổng và mức công suất
---      (kiểm tra thiết kế biểu giá theo công suất)
--- Câu hỏi  : mức từ 100 kW và khung cao điểm có thật sự đắt hơn mỗi kWh?
--- Kỹ thuật : GROUP BY kết hợp JOIN biểu giá, trung bình có trọng số (SUM/SUM),
---            UNION ALL để thêm dòng tổng cộng
--- Bảng     : payment_transaction, tariff_rate, service_session
+-- Q12. Giá trung bình mỗi kWh thực thu theo dải công suất, khung và PHIÊN BẢN giá
+--      (kiểm tra thiết kế biểu giá và lịch sử đổi giá)
+-- Câu hỏi  : mức từ 100 kW và khung cao điểm có thật sự đắt hơn mỗi kWh,
+--            và lần tăng giá 01/10/2026 tác động ra sao?
+-- Kỹ thuật : GROUP BY kết hợp JOIN biểu giá theo phiên bản, trung bình có trọng
+--            số (SUM/SUM), UNION ALL để thêm dòng tổng cộng
+-- Bảng     : payment_transaction, service_session, tariff_rate, power_tier
 -- -----------------------------------------------------------------------------
 SELECT t.connector_type_code,
-       t.min_power_kw || ' - ' || t.max_power_kw AS power_range_kw,
+       pt.min_power_kw || ' - ' || pt.max_power_kw AS power_range_kw,
        t.time_band_code,
+       to_char(t.effective_from AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS price_from,
        count(*)                  AS invoice_count,
        sum(ss.consumed_energy_kwh) AS total_kwh,
        round(sum(p.energy_amount_value) / nullif(sum(ss.consumed_energy_kwh), 0), 0)
            AS effective_price_per_kwh
 FROM payment_transaction AS p
-JOIN tariff_rate AS t ON t.rate_identifier = p.rate_identifier
 JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-GROUP BY t.connector_type_code, t.min_power_kw, t.max_power_kw, t.time_band_code
+JOIN tariff_rate AS t ON t.rate_identifier = ss.rate_identifier
+JOIN power_tier AS pt ON pt.connector_type_code = t.connector_type_code
+                     AND pt.min_power_kw = t.min_power_kw
+GROUP BY t.connector_type_code, pt.min_power_kw, pt.max_power_kw, t.time_band_code,
+         t.effective_from
 UNION ALL
-SELECT 'ALL', '-', '-',
+SELECT 'ALL', '-', '-', '-',
        count(*), sum(ss.consumed_energy_kwh),
        round(sum(p.energy_amount_value) / nullif(sum(ss.consumed_energy_kwh), 0), 0)
 FROM payment_transaction AS p
 JOIN service_session AS ss ON ss.session_identifier = p.session_identifier
-ORDER BY 1, 2, 3;
+WHERE ss.equipment_identifier IS NOT NULL
+ORDER BY 1, 2, 3, 4;
 
 -- -----------------------------------------------------------------------------
 -- Q13. (cần PostGIS) Các bãi gần nhất hiện còn trụ sạc trống
