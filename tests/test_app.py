@@ -444,9 +444,22 @@ def test_invalid_id_from_database_is_not_a_500(client, monkeypatch):
 def test_admin_tariff_rejects_non_finite_or_out_of_range(client, monkeypatch, price):
     called = []
     monkeypatch.setattr(app_module.db, "run", lambda *a, **k: called.append(1) or 1)
+    monkeypatch.setattr(app_module.db, "row", lambda *a, **k: called.append(1) or {"id": "n"})
     tok = login_as(client, "ADMIN")
     client.post("/admin/tariff", data={"csrf": tok, "id": "r", "price": price, "overtime": "0"})
+    client.post("/admin/tariff", data={"csrf": tok, "id": "r", "kind": "parking", "hourly": price})
     assert not called
+
+
+def test_admin_price_change_adds_a_new_version(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(app_module.db, "run", lambda *a, **k: pytest.fail("no direct UPDATE"))
+    monkeypatch.setattr(app_module.db, "row", lambda sql, p=(): seen.append((sql, p)) or {"id": "n"})
+    tok = login_as(client, "ADMIN")
+    client.post("/admin/tariff", data={"csrf": tok, "id": "r1", "price": "3500", "overtime": "50000"})
+    client.post("/admin/tariff", data={"csrf": tok, "id": "p1", "kind": "parking", "hourly": "18000"})
+    assert "fn_change_tariff" in seen[0][0] and seen[0][1] == ("r1", 3500.0, 50000.0)
+    assert "fn_change_parking_rate" in seen[1][0] and seen[1][1] == ("p1", 18000.0)
 
 
 # ------------------------------------------------------------ phien sac
@@ -618,7 +631,21 @@ def test_manager_can_check_in_parking_only_booking(client, monkeypatch):
     tok = login_as(client, "MANAGER")
     r = client.post("/manager/reservation", data={"csrf": tok, "id": "x", "action": "arrive"})
     assert r.status_code == 302
-    assert "'FULFILLED'" in calls[0] and "NOT EXISTS" in calls[0] and "facility_manager" in calls[0]
+    assert "INSERT INTO service_session" in calls[0] and "space_identifier" in calls[0]
+    assert "facility_manager" in calls[0]
+
+
+def test_manager_records_a_car_parking_on_a_space_without_charger(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(app_module.db, "run", lambda sql, p=(): calls.append((sql, p)) or 1)
+    monkeypatch.setattr(app_module.db, "row", lambda *a, **k: None)
+    tok = login_as(client, "MANAGER")
+    r = client.post("/manager/parking/start",
+                    data={"csrf": tok, "space": "sp1", "plate": " 51a-123.45 ", "fac": "f1"})
+    assert r.status_code == 302
+    sql, params = calls[-1]
+    assert "INSERT INTO service_session" in sql and "space_identifier" in sql
+    assert "facility_manager" in sql and params[:2] == ("sp1", "51A-123.45")
 
 
 def test_confirm_excludes_overdue_bookings(client, monkeypatch):
@@ -1174,3 +1201,56 @@ def test_overdue_anomaly_matches_the_release_rule():
     part = sql[sql.index("'OVERDUE'"):sql.index("'OCCUPIED_NO_SESSION'")]
     assert "INTERVAL '%d minutes'" % app_module.GRACE_MIN in part      # same grace as the release
     assert "service_session" in part                                  # a started session is not overdue
+
+
+# ------------------------------------------------------------ bieu gia tach khung gio
+def test_api_time_reads_band_schedule_from_window_table(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(app_module.db, "row", lambda *a, **k: {
+        "epoch_ms": 1793862000000, "local_iso": "2026-11-05T14:00:00"})
+    monkeypatch.setattr(app_module.db, "rows", lambda sql, p=(): seen.append(sql) or BANDS)
+    client.get("/api/time")
+    assert "FROM time_band_window" in seen[0] and "tariff_rate" not in seen[0]
+
+
+def test_admin_tariff_tab_shows_window_schedule_and_prices(client, monkeypatch):
+    def rows(sql, p=()):
+        if "FROM time_band_window" in sql:
+            return [{"band": "PEAK", "from_text": "17:00", "to_text": "20:00"},
+                    {"band": "OFF_PEAK", "from_text": "22:00", "to_text": "24:00"}]
+        if "FROM tariff_rate" in sql:
+            assert "start_time" not in sql
+            return [{"id": "r1", "conn": "FAST_DC", "band": "PEAK", "min_kw": 0.0, "max_kw": 100.0,
+                     "price": 3300.0, "overtime": 60000.0}]
+        return []
+    monkeypatch.setattr(app_module.db, "rows", rows)
+    monkeypatch.setattr(app_module.db, "row", lambda *a, **k: {})
+    login_as(client, "ADMIN")
+    html = client.get("/admin?tab=tariff").get_data(as_text=True)
+    assert "time_band_window" in html and "17:00–20:00" in html and "22:00–24:00" in html
+    assert 'value="3300"' in html and 'value="60000"' in html
+
+
+# ------------------------------------------------------------ phi do xe
+def test_manager_page_shows_parking_invoice(client, monkeypatch):
+    bill = dict(INVOICE, parking_only=True, hours=1.5, hourly=20000.0, parking=30000.0,
+                energy=0.0, overtime=0.0, total=30000.0, evse=None, kw=None)
+    monkeypatch.setattr(app_module.db, "rows", manager_rows)
+    monkeypatch.setattr(app_module.db, "row", lambda *a, **k: dict(bill))
+    login_as(client, "MANAGER")
+    html = client.get("/manager?fac=f1&invoice=t5").get_data(as_text=True)
+    assert "Phí đỗ xe" in html and "1.50 giờ × 20.000đ" in html and "30.000đ" in html
+    assert "kWh ×" not in html
+
+
+def test_customer_sees_running_parking_fee(client, monkeypatch):
+    def rows(sql, p=()):
+        if "-- parking_sessions" in sql:
+            return [{"plate": "51A-1", "code": "A-12", "facility": "EV Hub Q1", "band": "PEAK",
+                     "hourly": 20000.0, "since": "18:00", "so_far": 25000.0}]
+        return customer_rows(sql, p)
+    monkeypatch.setattr(app_module.db, "rows", rows)
+    monkeypatch.setattr(app_module.db, "row", lambda *a, **k: {"d": "2026-11-05"})
+    login_as(client, "CUSTOMER")
+    html = client.get("/customer").get_data(as_text=True)
+    assert "Xe đang đỗ" in html and "20.000đ/giờ" in html and "25.000đ" in html
