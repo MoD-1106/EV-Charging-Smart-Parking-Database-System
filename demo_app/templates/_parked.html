@@ -1,6 +1,0 @@
-{% for p in parked %}<tr><td class="mono">{{ p.code }}</td><td class="mono">{{ p.plate }}</td><td>{{ p.owner }}</td>
-  <td>{% if p.kind == 'PARKING' %}<span class="pill RESERVED">Chỉ đỗ</span>{% elif p.full_text %}<span class="pill OUTOFSERVICE">Đã đầy từ {{ p.full_text }}</span>{% else %}<span class="pill OCCUPIED">Đang sạc</span>{% endif %}</td>
-  <td class="mono">{{ p.since }}{% if p.until_text %} → {{ p.until_text }}{% endif %}</td>
-  <td class="mono"><span data-live="elapsed" data-ms="{{ p.since_ms }}">—</span></td>
-  <td class="mono">{% if p.kind == 'CHARGING' %}{{ '%.1f'|format(p.pct_now) }}% · {{ '%.1f'|format(p.kwh) }} kWh{% else %}—{% endif %}</td></tr>
-{% else %}<tr><td colspan="7" class="muted">Không có xe nào trong bãi.</td></tr>{% endfor %}
