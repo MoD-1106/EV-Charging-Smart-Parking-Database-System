@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block body %}
+{% macro password_cell(a) %}<td class="mono" style="white-space:nowrap">{{ a.password or 'Chưa lưu' }}<form method="post" action="{{ url_for('admin_account_password') }}" style="display:inline;margin:0 0 0 6px"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn ghost sm" type="submit" title="Tạo mật khẩu mới">Đặt lại</button></form></td>{% endmacro %}
+{% macro delete_button(a) %}<a class="btn danger sm" style="text-decoration:none" href="{{ url_for('admin', tab='accounts', delete=a.id) }}">Xóa</a>{% endmacro %}
+<div class="tabs">{% for k, label in [('overview','Tổng quan'),('tariff','Biểu giá'),('facilities','Bãi & phân công'),('accounts','Tài khoản'),('bookings','Đối soát lịch đặt'),('invoices','Đối soát hóa đơn')] %}<a href="{{ url_for('admin', tab=k) }}" class="{{ 'on' if tab == k }}">{{ label }}</a>{% endfor %}</div>
+{% if tab == 'overview' %}
+<div class="kpis">
+  <div class="kpi"><small>Doanh thu 30 ngày</small><b>{{ kpi.revenue|vnd }}</b></div>
+  <div class="kpi"><small>Phiên sạc 30 ngày</small><b>{{ kpi.sessions }}</b></div>
+  <div class="kpi"><small>Hóa đơn chờ thanh toán</small><b>{{ kpi.pending_invoices }}</b></div>
+  <div class="kpi"><small>Đặt chỗ hết hạn 30 ngày</small><b>{{ kpi.no_shows }}</b></div>
+</div>
+<section class="panel"><h2>Doanh thu theo bãi và khung giá (30 ngày, thành công)</h2><div class="scroll"><table><thead><tr><th>Bãi</th><th>Khung</th><th class="r">Hóa đơn</th><th class="r">Doanh thu</th></tr></thead><tbody>
+{% for r in revenue %}<tr><td>{{ r.facility.replace('EV Hub ', '') }}</td><td><span class="pill {{ r.band }}">{{ BAND_NAME[r.band] }}</span></td><td class="r mono">{{ r.invoices }}</td><td class="r mono">{{ r.revenue|vnd }}</td></tr>{% else %}<tr><td colspan="4" class="muted">Chưa có dữ liệu.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% elif tab == 'tariff' %}
+<section class="panel"><h2>Lịch khung giờ (time_band_window)</h2><p class="muted">Khai báo một lần cho mọi loại cổng; giờ địa phương Asia/Ho_Chi_Minh.</p><div class="scroll"><table><thead><tr><th>Giờ</th><th>Khung</th></tr></thead><tbody>
+{% for w in windows %}<tr><td class="mono">{{ w.from_text }}–{{ w.to_text }}</td><td><span class="pill {{ w.band }}">{{ BAND_NAME[w.band] }}</span></td></tr>
+{% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h2>Biểu giá sạc (tariff_rate)</h2><p class="muted">Giá đang áp dụng cho mỗi loại cổng, dải công suất và khung. Phí quá giờ có thể khác nhau theo loại trụ. Lưu giá mới sẽ đóng phiên bản hiện tại và mở phiên bản mới từ bây giờ; phiên đã bắt đầu và hóa đơn cũ giữ phiên bản cũ.</p><div class="scroll"><table><thead><tr><th>Cổng</th><th>Dải kW</th><th>Khung</th><th>Hiệu lực từ</th><th class="r">Giá / kWh</th><th class="r">Quá giờ / giờ</th><th></th></tr></thead><tbody>
+{% for t in tariffs %}<tr>
+  <td class="mono">{{ t.conn }}</td><td class="mono">{{ '%g'|format(t.min_kw) }}–{{ '%g'|format(t.max_kw) }}</td><td><span class="pill {{ t.band }}">{{ BAND_NAME[t.band] }}</span></td><td class="mono small">{{ t.from_text }}</td>
+  <td class="r"><input class="mono" form="tf{{ loop.index }}" name="price" type="number" min="0" step="100" value="{{ '%g'|format(t.price) }}" aria-label="Giá mỗi kWh"></td>
+  <td class="r"><input class="mono" form="tf{{ loop.index }}" name="overtime" type="number" min="0" step="1000" value="{{ '%g'|format(t.overtime) }}" aria-label="Phí quá giờ"></td>
+  <td><form id="tf{{ loop.index }}" method="post" action="{{ url_for('admin_tariff') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ t.id }}"><button class="btn sm" type="submit">Lưu</button></form></td></tr>
+{% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h2>Giá đỗ xe theo giờ (parking_rate)</h2><p class="muted">Áp dụng cho ô không có trụ sạc, theo khung của giờ xe vào bãi.</p><div class="scroll"><table><thead><tr><th>Khung</th><th>Hiệu lực từ</th><th class="r">Giá / giờ</th><th></th></tr></thead><tbody>
+{% for r in parking_rates %}<tr><td><span class="pill {{ r.band }}">{{ BAND_NAME[r.band] }}</span></td><td class="mono small">{{ r.from_text }}</td>
+  <td class="r"><input class="mono" form="pf{{ loop.index }}" name="hourly" type="number" min="0" step="1000" value="{{ '%g'|format(r.hourly) }}" aria-label="Giá đỗ mỗi giờ"></td>
+  <td><form id="pf{{ loop.index }}" method="post" action="{{ url_for('admin_tariff') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="kind" value="parking"><input type="hidden" name="id" value="{{ r.id }}"><button class="btn sm" type="submit">Lưu</button></form></td></tr>
+{% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h2>Lịch sử giá</h2><p class="muted">Các phiên bản đã hết hiệu lực (mới nhất trước).</p><div class="scroll"><table><thead><tr><th>Mục</th><th>Khung</th><th class="r">Giá</th><th>Từ</th><th>Đến</th></tr></thead><tbody>
+{% for h in history %}<tr><td class="mono">{{ h.item }}</td><td><span class="pill {{ h.band }}">{{ BAND_NAME[h.band] }}</span></td><td class="r mono">{{ h.price|vnd }}/{{ h.unit }}</td><td class="mono small">{{ h.from_text }}</td><td class="mono small">{{ h.to_text }}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">Chưa đổi giá lần nào.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% elif tab == 'facilities' %}
+<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))">
+{% for f in facilities %}
+<section class="panel"><h3>{{ f.name.replace('EV Hub ', '') }}</h3>
+  <div class="kv"><span>Ô đã tạo / sức chứa</span><span class="mono">{{ f.spaces }} / {{ f.capacity }}</span></div>
+  <div class="muted small" style="margin:8px 0 6px">Quản lý phụ trách</div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+  {% for m in f.managers %}<span class="chip">{{ m.name }}<form method="post" action="{{ url_for('admin_assign') }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="facility" value="{{ f.id }}"><input type="hidden" name="manager" value="{{ m.id }}"><input type="hidden" name="action" value="remove"><button type="submit" aria-label="Thu hồi {{ m.name }}">×</button></form></span>{% else %}<span class="muted small">Chưa có.</span>{% endfor %}</div>
+  <form method="post" action="{{ url_for('admin_assign') }}" class="row"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="facility" value="{{ f.id }}">
+    <div class="field" style="margin:0"><select name="manager" aria-label="Chọn quản lý">{% for m in managers %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}</select></div>
+    <div class="field" style="margin:0;flex:0"><button class="btn sm" type="submit">Gán</button></div></form>
+</section>{% endfor %}
+</div>
+{% elif tab == 'bookings' %}
+<section class="panel"><form method="get" action="{{ url_for('admin') }}" class="row"><input type="hidden" name="tab" value="bookings">
+  <div class="field" style="flex:0 0 auto"><label for="rday">Ngày</label><input id="rday" type="date" name="day" value="{{ day.isoformat() }}"></div>
+  <div class="field"><label for="rfac">Bãi</label><select id="rfac" name="fac"><option value="">Tất cả</option>{% for f in facilities %}<option value="{{ f.id }}" {{ 'selected' if f.id == fac_id }}>{{ f.name }}</option>{% endfor %}</select></div>
+  <div class="field"><label for="rst">Trạng thái đặt</label><select id="rst" name="status"><option value="">Tất cả</option>{% for k, v in RES_NAME.items() %}<option value="{{ k }}" {{ 'selected' if k == status }}>{{ v }}</option>{% endfor %}</select></div>
+  <div class="field" style="flex:0"><button class="btn" type="submit">Lọc</button></div></form>
+  <p class="muted small" style="margin-top:8px">Đối soát lịch đặt với trạng thái ô, phiên sạc và hóa đơn; tự cập nhật mỗi 15 giây.</p></section>
+<div class="stack" data-refresh="{{ url_for('admin_reconcile', day=day.isoformat(), fac=fac_id or '', status=status or '') }}">{% include "_reconcile.html" %}</div>
+{% elif tab == 'accounts' %}
+{% if target %}
+<section class="panel" style="margin-bottom:16px;border:2px solid var(--busy)"><h2>Xóa tài khoản {{ target.email }} không?</h2>
+  <p>{{ target.name }} ({{ target.role }})</p>
+  {% if target.charging or target.unpaid %}<div class="flash err" role="alert"><b>Lưu ý trước khi xóa</b><ul>
+    {% if target.charging %}<li>Khách đang sạc xe {{ target.charging }}. Quản lý vẫn phải kết thúc phiên để lập hóa đơn.</li>{% endif %}
+    {% if target.unpaid %}<li>Khách còn {{ target.unpaid }} hóa đơn chưa trả, tổng {{ target.owed|vnd }}. Sau khi xóa, khách không đăng nhập được để thanh toán.</li>{% endif %}
+  </ul></div>{% endif %}
+  <p class="muted small">{% if target.role == 'MANAGER' %}Các bãi đang phụ trách sẽ bị thu hồi (khôi phục tài khoản thì phải gán lại).{% else %}Lượt đặt sắp tới sẽ bị hủy (khôi phục không lấy lại lượt đặt), xe ngừng sử dụng.{% endif %} Khôi phục được trong 30 phút, sau đó xóa vĩnh viễn; thông tin trên hóa đơn được giữ lại.</p>
+  <form method="post" action="{{ url_for('admin_account_delete') }}" style="display:flex;gap:8px;margin:0">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ target.id }}"><input type="hidden" name="ack" value="1">
+    <button class="btn danger" type="submit">Xóa tài khoản</button><a class="btn ghost" style="text-decoration:none" href="{{ url_for('admin', tab='accounts') }}">Không xóa</a></form></section>
+{% endif %}
+<div class="cols">
+<div style="display:grid;gap:16px;align-content:start;min-width:0">
+<section class="panel"><h2>Tài khoản quản lý và quản trị</h2><div class="scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Mật khẩu</th><th>Vai trò</th><th>Tạo ngày</th><th></th></tr></thead><tbody>
+{% for a in accounts %}<tr><td>{{ a.name }}</td><td class="mono">{{ a.email }}</td>{{ password_cell(a) }}<td><span class="pill {{ 'FULFILLED' if a.role == 'MANAGER' else 'PEAK' }}">{{ a.role }}</span></td><td class="mono">{{ a.created }}</td><td>{% if a.role == 'MANAGER' %}{{ delete_button(a) }}{% endif %}</td></tr>{% endfor %}
+</tbody></table></div></section>
+<section class="panel"><h2>Tài khoản khách hàng ({{ customers|length }})</h2><div class="scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Mật khẩu</th><th>Điện thoại</th><th>Xe</th><th>Tạo ngày</th><th></th></tr></thead><tbody>
+{% for a in customers %}<tr><td>{{ a.name }}</td><td class="mono">{{ a.email }}</td>{{ password_cell(a) }}<td class="mono">{{ a.phone }}</td><td class="mono">{{ a.plates or '—' }}</td><td class="mono">{{ a.created }}</td><td>{{ delete_button(a) }}</td></tr>{% else %}<tr><td colspan="7" class="muted">Chưa có khách hàng.</td></tr>{% endfor %}
+</tbody></table></div><p class="muted small" style="margin-top:10px">Tài khoản quản trị không xóa được. "Chưa lưu": tài khoản tạo trước khi hệ thống lưu mật khẩu; mật khẩu hiện ra sau lần đăng nhập kế tiếp hoặc khi bấm Đặt lại.</p></section>
+<section class="panel"><h2>Tài khoản đã xóa</h2><div class="scroll"><table><thead><tr><th>Họ tên</th><th>Email</th><th>Vai trò</th><th>Xóa lúc</th><th>Còn lại</th><th></th></tr></thead><tbody>
+{% for a in removed %}<tr><td>{{ a.name }}</td><td class="mono">{{ a.email }}</td><td class="mono">{{ a.role }}</td><td class="mono">{{ a.deleted }}</td>
+  {% if a.minutes_left > 0 %}<td class="mono">{{ a.minutes_left }} phút</td><td><form method="post" action="{{ url_for('admin_account_restore') }}" style="margin:0"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ a.id }}"><button class="btn sm" type="submit">Khôi phục</button></form></td>
+  {% else %}<td colspan="2" class="muted small">Hết hạn, chờ phiên sạc kết thúc để xóa vĩnh viễn.</td>{% endif %}</tr>{% else %}<tr><td colspan="6" class="muted">Không có.</td></tr>{% endfor %}
+</tbody></table></div></section>
+</div>
+<aside class="panel"><h2>Tạo tài khoản mới</h2>
+<form method="post" action="{{ url_for('admin_accounts') }}"><input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="field"><label for="n">Họ tên</label><input id="n" name="name" required maxlength="100"></div>
+  <div class="field"><label for="e">Email</label><input id="e" name="email" type="email" required></div>
+  <div class="field"><label for="p">Số điện thoại</label><input id="p" name="phone" required pattern="\+?[0-9]{8,14}"></div>
+  <div class="field"><label for="r">Vai trò</label><select id="r" name="role"><option value="MANAGER">MANAGER</option><option value="ADMIN">ADMIN</option></select></div>
+  <div class="field"><label for="pw">Mật khẩu (tối thiểu 8 ký tự)</label><input id="pw" name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+  <div class="field"><label for="pw2">Nhập lại mật khẩu</label><input id="pw2" name="password2" type="password" required minlength="8" autocomplete="new-password"></div>
+  <button class="btn" type="submit" style="width:100%">Tạo tài khoản</button>
+  <p class="muted small">Bạn tự đặt mật khẩu và gửi cho người dùng. Mật khẩu hiện trong danh sách tài khoản.</p></form></aside>
+</div>
+{% else %}
+<section class="panel"><h2>Giao dịch gần nhất</h2><div class="scroll"><table><thead><tr><th>Thời điểm</th><th>Khách</th><th>Xe</th><th>Khung</th><th class="r">Điện năng</th><th class="r">Quá giờ</th><th class="r">Đỗ xe</th><th class="r">Tổng</th><th>Trạng thái</th></tr></thead><tbody>
+{% for i in invoices %}<tr><td class="mono">{{ i.day_text }}</td><td>{{ i.customer }}</td><td class="mono">{{ i.plate }}</td><td><span class="pill {{ i.band }}">{{ BAND_NAME[i.band] }}</span></td><td class="r mono">{{ i.energy|vnd }}</td><td class="r mono">{{ i.overtime|vnd }}</td><td class="r mono">{{ i.parking|vnd }}</td><td class="r mono"><b>{{ i.total|vnd }}</b></td><td><span class="pill {{ i.status }}">{{ PAY_NAME[i.status] }}</span></td></tr>{% endfor %}
+</tbody></table></div><p class="muted small" style="margin-top:10px">Số tiền và phiên của hóa đơn không sửa được; phiên trỏ tới phiên bản giá đã áp dụng; hóa đơn không xóa được (trg_payment_immutable).</p></section>
+{% endif %}
+{% endblock %}
